@@ -237,7 +237,8 @@ class ModelRunner:
         )
 
         # This can reduce thread conflicts and speed up weight loading.
-        torch.set_num_threads(1)
+        if self.device != "cpu":
+            torch.set_num_threads(1)
         if self.device == "cuda":
             if torch.cuda.get_device_capability()[0] < 8:
                 logger.info(
