@@ -941,7 +941,8 @@ class Scheduler:
             self.process_batch_result_prefill(batch, result)
         elif batch.forward_mode.is_dummy_first():
             batch.next_batch_sampling_info.update_regex_vocab_mask()
-            self.current_stream.synchronize()
+            if self.device != "cpu":
+                self.current_stream.synchronize()
             batch.next_batch_sampling_info.sampling_info_done.set()
 
     def process_batch_result_prefill(self, batch: ScheduleBatch, result):
@@ -1008,7 +1009,8 @@ class Scheduler:
 
             if batch.next_batch_sampling_info:
                 batch.next_batch_sampling_info.update_regex_vocab_mask()
-                self.current_stream.synchronize()
+                if self.device != "cpu":
+                    self.current_stream.synchronize()
                 batch.next_batch_sampling_info.sampling_info_done.set()
 
         else:  # embedding or reward model
@@ -1087,7 +1089,8 @@ class Scheduler:
 
         if batch.next_batch_sampling_info:
             batch.next_batch_sampling_info.update_regex_vocab_mask()
-            self.current_stream.synchronize()
+            if self.device != "cpu":
+                self.current_stream.synchronize()
             batch.next_batch_sampling_info.sampling_info_done.set()
 
         self.stream_output(batch.reqs, batch.return_logprob)

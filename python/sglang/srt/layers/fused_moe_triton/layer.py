@@ -13,6 +13,7 @@ from vllm.distributed import (
 from vllm.model_executor.custom_op import CustomOp
 
 from sglang.srt.layers.custom_op_util import register_custom_op
+from sglang.srt.layers.linear import get_global_server_args_dict
 from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
@@ -204,7 +205,7 @@ class FusedMoE(torch.nn.Module):
             params_dtype = torch.get_default_dtype()
 
         self.tp_size = (
-            tp_size if tp_size is not None else get_tensor_model_parallel_world_size()
+            tp_size if tp_size is not None else get_tensor_model_parallel_world_size(get_global_server_args_dict()["device"])
         )
         self.top_k = top_k
         self.num_experts = num_experts
@@ -406,7 +407,7 @@ class FusedMoE(torch.nn.Module):
         SHARD_ID_TO_SHARDED_DIM = {"w1": 0, "w2": 1, "w3": 0}
 
         expert_data = param.data[expert_id]
-        tp_rank = get_tensor_model_parallel_rank()
+        tp_rank = get_tensor_model_parallel_rank(get_global_server_args_dict()["device"])
 
         # is_transposed: if the dim to shard the weight
         # should be flipped. Required by GPTQ, compressed-tensors

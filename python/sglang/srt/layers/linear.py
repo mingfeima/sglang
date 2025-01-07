@@ -46,6 +46,12 @@ WEIGHT_LOADER_V2_SUPPORTED = [
 ]
 
 
+# Avoid circular import
+def get_global_server_args_dict():
+    from sglang.srt.managers.schedule_batch import global_server_args_dict
+    return global_server_args_dict
+
+
 def adjust_marlin_shard(param, shard_size, shard_offset):
     marlin_tile_size = getattr(param, "marlin_tile_size", None)
     if marlin_tile_size is None:
@@ -293,7 +299,7 @@ class ColumnParallelLinear(LinearBase):
         self.gather_output = gather_output
 
         # Divide the weight matrix along the last dimension.
-        tp_size = get_tensor_model_parallel_world_size()
+        tp_size = get_tensor_model_parallel_world_size(get_global_server_args_dict()["device"])
         assert self.quant_method is not None
         self.output_size_per_partition = divide(self.output_size, tp_size)
         self.output_partition_sizes = [self.output_size_per_partition]
@@ -334,7 +340,7 @@ class ColumnParallelLinear(LinearBase):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: Parameter, loaded_weight: torch.Tensor):
-        tp_rank = get_tensor_model_parallel_rank()
+        tp_rank = get_tensor_model_parallel_rank(get_global_server_args_dict()["device"])
         output_dim = getattr(param, "output_dim", None)
 
         # Special case for GGUF
@@ -431,7 +437,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         prefix: str = "",
     ):
         self.output_sizes = output_sizes
-        tp_size = get_tensor_model_parallel_world_size()
+        tp_size = get_tensor_model_parallel_world_size(get_global_server_args_dict()["device"])
         assert all(output_size % tp_size == 0 for output_size in output_sizes)
         super().__init__(
             input_size=input_size,
@@ -520,8 +526,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             return
 
         assert loaded_shard_id < len(self.output_sizes)
-        tp_rank = get_tensor_model_parallel_rank()
-        tp_size = get_tensor_model_parallel_world_size()
+        tp_rank = get_tensor_model_parallel_rank(get_global_server_args_dict()["device"])
+        tp_size = get_tensor_model_parallel_world_size(get_global_server_args_dict()["device"])
         if output_dim is not None:
             shard_offset = sum(self.output_sizes[:loaded_shard_id]) // tp_size
             shard_size = self.output_sizes[loaded_shard_id] // tp_size
@@ -1045,8 +1051,8 @@ class RowParallelLinear(LinearBase):
         self.reduce_results = reduce_results
 
         # Divide the weight matrix along the last dimension.
-        self.tp_rank = get_tensor_model_parallel_rank()
-        self.tp_size = get_tensor_model_parallel_world_size()
+        self.tp_rank = get_tensor_model_parallel_rank(get_global_server_args_dict()["device"])
+        self.tp_size = get_tensor_model_parallel_world_size(get_global_server_args_dict()["device"])
         self.input_size_per_partition = divide(input_size, self.tp_size)
         assert self.quant_method is not None
 
@@ -1082,8 +1088,8 @@ class RowParallelLinear(LinearBase):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: Parameter, loaded_weight: torch.Tensor):
-        tp_rank = get_tensor_model_parallel_rank()
-        tp_size = get_tensor_model_parallel_world_size()
+        tp_rank = get_tensor_model_parallel_rank(get_global_server_args_dict()["device"])
+        tp_size = get_tensor_model_parallel_world_size(get_global_server_args_dict()["device"])
         input_dim = getattr(param, "input_dim", None)
         use_bitsandbytes_4bit = getattr(param, "use_bitsandbytes_4bit", False)
 
