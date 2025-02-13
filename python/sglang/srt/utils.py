@@ -60,6 +60,8 @@ from triton.runtime.cache import (
     default_override_dir,
 )
 from uvicorn.config import LOGGING_CONFIG
+from vllm.distributed import tensor_model_parallel_all_reduce
+from vllm.distributed.parallel_state import get_tp_group
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,41 @@ def is_ipv6(address):
         return True
     except ipaddress.AddressValueError:
         return False
+
+
+_TP_wrapper = None
+
+
+class GroupCoordinatorWrapper:
+    def __init__(
+        self,
+        shm_comm_op=None,
+    ):
+        self.shm_comm_op = shm_comm_op
+
+
+def get_tp_wrapper():
+    assert _TP_wrapper is not None, "tensor model parallel group is not initialized"
+    return _TP_wrapper
+
+
+def init_tp_wrapper(
+    shm_comm_op=None,
+):
+    global _TP_wrapper
+    assert _TP_wrapper is None, "tensor model parallel group is already initialized"
+    _TP_wrapper = GroupCoordinatorWrapper(shm_comm_op)
+
+
+def tensor_model_parallel_all_reduce_wrapper(input_: torch.Tensor) -> torch.Tensor:
+    if input_.is_cpu:
+        shm_comm_op = get_tp_wrapper().shm_comm_op
+        shm_comm_op.shm_allreduce(
+            input_, get_tp_group().device_group, torch.distributed.ReduceOp.SUM
+        )
+        return input_
+
+    return tensor_model_parallel_all_reduce(input_)
 
 
 def enable_show_time_cost():

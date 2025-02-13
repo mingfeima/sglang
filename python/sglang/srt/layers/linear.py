@@ -13,7 +13,6 @@ from vllm.distributed import (
     get_tensor_model_parallel_world_size,
     split_tensor_along_last_dim,
     tensor_model_parallel_all_gather,
-    tensor_model_parallel_all_reduce,
 )
 
 from sglang.srt.layers.parameter import (
@@ -28,7 +27,7 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizeMethodBase,
 )
 from sglang.srt.layers.quantization.fp8_utils import BlockQuantScaleParameter
-from sglang.srt.utils import set_weight_attrs
+from sglang.srt.utils import set_weight_attrs, tensor_model_parallel_all_reduce_wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -1239,7 +1238,7 @@ class RowParallelLinear(LinearBase):
         bias_ = None if (self.tp_rank > 0 or self.skip_bias_add) else self.bias
         output_parallel = self.quant_method.apply(self, input_parallel, bias=bias_)
         if self.reduce_results and self.tp_size > 1:
-            output = tensor_model_parallel_all_reduce(output_parallel)
+            output = tensor_model_parallel_all_reduce_wrapper(output_parallel)
         else:
             output = output_parallel
 

@@ -61,6 +61,7 @@ from sglang.srt.utils import (
     enable_show_time_cost,
     get_available_gpu_memory,
     init_custom_process_group,
+    init_tp_wrapper,
     is_cuda,
     is_hip,
     monkey_patch_vllm_gguf_config,
@@ -244,9 +245,19 @@ class ModelRunner:
         set_custom_all_reduce(not self.server_args.disable_custom_all_reduce)
 
         if not self.is_draft_worker:
-            # Bind OpenMP threads to CPU cores
-            if self.device == "cpu" and self.local_omp_cpuid != "all":
-                torch.ops._C_utils.init_cpu_threads_env(self.local_omp_cpuid)
+            if self.device == "cpu":
+                # Bind OpenMP threads to CPU cores
+                if self.local_omp_cpuid != "all":
+                    torch.ops._C_utils.init_cpu_threads_env(self.local_omp_cpuid)
+
+                # Initialization of shm all_reduce
+                import sgl_kernel.ops._kernels
+
+                shm_comm_op = sgl_kernel.ops._kernels
+                # Set local size to hint SGLang to use shared memory based AllReduce
+                os.environ["LOCAL_SIZE"] = str(self.tp_size)
+                shm_comm_op.initialize(self.tp_size, self.tp_rank)
+                init_tp_wrapper(shm_comm_op)
 
             # Only initilzie the distributed environment on the target model worker.
             init_distributed_environment(
