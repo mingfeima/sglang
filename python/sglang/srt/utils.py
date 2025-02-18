@@ -61,7 +61,6 @@ from triton.runtime.cache import (
     default_dump_dir,
     default_override_dir,
 )
-from vllm.distributed import tensor_model_parallel_all_reduce
 
 logger = logging.getLogger(__name__)
 
@@ -102,43 +101,6 @@ def is_flashinfer_available():
 
 def is_cuda_available():
     return torch.cuda.is_available() and torch.version.cuda
-
-
-_TP_wrapper = None
-
-
-class GroupCoordinatorWrapper:
-    def __init__(
-        self,
-        shm_comm_op=None,
-    ):
-        self.shm_comm_op = shm_comm_op
-
-
-def get_tp_wrapper():
-    assert _TP_wrapper is not None, "tensor model parallel group is not initialized"
-    return _TP_wrapper
-
-
-def init_tp_wrapper(
-    shm_comm_op=None,
-):
-    global _TP_wrapper
-    assert _TP_wrapper is None, "tensor model parallel group is already initialized"
-    _TP_wrapper = GroupCoordinatorWrapper(shm_comm_op)
-
-
-def tensor_model_parallel_all_reduce_wrapper(input_: torch.Tensor) -> torch.Tensor:
-    if input_.is_cpu:
-        from sglang.srt.distributed import get_tp_group
-
-        shm_comm_op = get_tp_wrapper().shm_comm_op
-        shm_comm_op.shm_allreduce(
-            input_, get_tp_group().device_group, torch.distributed.ReduceOp.SUM
-        )
-        return input_
-
-    return tensor_model_parallel_all_reduce(input_)
 
 
 def enable_show_time_cost():

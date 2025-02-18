@@ -63,7 +63,6 @@ from sglang.srt.utils import (
     enable_show_time_cost,
     get_available_gpu_memory,
     init_custom_process_group,
-    init_tp_wrapper,
     is_cuda,
     is_hip,
     monkey_patch_p2p_access_check,
@@ -272,7 +271,6 @@ class ModelRunner:
                 # Set local size to hint SGLang to use shared memory based AllReduce
                 os.environ["LOCAL_SIZE"] = str(self.tp_size)
                 shm_comm_op.initialize(self.tp_size, self.tp_rank)
-                init_tp_wrapper(shm_comm_op)
 
             # Only initialize the distributed environment on the target model worker.
             init_distributed_environment(
@@ -282,7 +280,9 @@ class ModelRunner:
                 local_rank=self.gpu_id,
                 distributed_init_method=dist_init_method,
             )
-            initialize_model_parallel(tensor_model_parallel_size=self.tp_size)
+            initialize_model_parallel(
+                tensor_model_parallel_size=self.tp_size, shm_comm_op=shm_comm_op
+            )
             initialize_dp_attention(
                 enable_dp_attention=self.server_args.enable_dp_attention,
                 tp_rank=self.tp_rank,
