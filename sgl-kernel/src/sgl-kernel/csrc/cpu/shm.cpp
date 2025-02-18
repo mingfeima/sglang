@@ -428,13 +428,14 @@ void reduce_fp32_buffers(
   }
 }
 
-static bool is_initialized = 0;
+static bool is_initialized = false;
 static int world_rank;
 
 void shm_initialize(int size, int rank, char* addr_string, char* port_string) {
-  if (is_initialized)
+  if (is_initialized) {
     return;
-  is_initialized = 1;
+  }
+  is_initialized = true;
 
   world_size = size;
   world_rank = rank;
@@ -644,8 +645,6 @@ void distributed_naive_reduce(
     if (i != world_rank)
       wait_buffer_state_until_2(i, reduce_current, copy_next, state_group);
   }
-
-  auto t4 = std::chrono::system_clock::now();
 
   for (int i = 0; i < world_size; i++) {
     int rank = (i + world_rank) % world_size;
