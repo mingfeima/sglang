@@ -62,7 +62,6 @@ from triton.runtime.cache import (
     default_override_dir,
 )
 from vllm.distributed import tensor_model_parallel_all_reduce
-from vllm.distributed.parallel_state import get_tp_group
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +130,8 @@ def init_tp_wrapper(
 
 def tensor_model_parallel_all_reduce_wrapper(input_: torch.Tensor) -> torch.Tensor:
     if input_.is_cpu:
+        from sglang.srt.distributed import get_tp_group
+
         shm_comm_op = get_tp_wrapper().shm_comm_op
         shm_comm_op.shm_allreduce(
             input_, get_tp_group().device_group, torch.distributed.ReduceOp.SUM
