@@ -6,13 +6,14 @@
 static int world_rank = -1;
 static int world_size = -1;
 
-static bool is_initialized = 0;
+static bool is_initialized = false;
 
 static bool all_ranks_local_p = false;
 
 void initialize(int size, int rank) {
-  if (is_initialized)
+  if (is_initialized) {
     return;
+  }
 
   // Check whether all ranks is on the same physical machine.
   // If true, we will use an SHM based low latency allreduce
@@ -29,7 +30,7 @@ void initialize(int size, int rank) {
 
   world_size = size;
   world_rank = rank;
-  is_initialized = 1;
+  is_initialized = true;
 
   auto addr_string = std::getenv("MASTER_ADDR");
   if (addr_string == NULL) {
