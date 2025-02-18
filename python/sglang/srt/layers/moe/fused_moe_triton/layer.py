@@ -202,6 +202,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         num_expert_group: Optional[int] = None,
         custom_routing_function: Optional[Callable] = None,
         correction_bias: Optional[torch.Tensor] = None,
+        activation: str = "silu",
     ) -> torch.Tensor:
         return moe_forward_native(
             layer,
@@ -214,12 +215,13 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             num_expert_group,
             custom_routing_function,
             correction_bias,
+            activation,
         )
 
     def forward_tpu(self, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError("The TPU backend currently does not support MoE.")
 
-    forward_native = forward_cuda
+    forward_native = forward_cpu
 
 
 class FusedMoE(torch.nn.Module):
