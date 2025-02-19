@@ -1,15 +1,20 @@
-from sgl_kernel.ops._kernels import all_reduce as _all_reduce
-from sgl_kernel.ops._kernels import dispose as _dispose
-from sgl_kernel.ops._kernels import (
-    get_graph_buffer_ipc_meta as _get_graph_buffer_ipc_meta,
-)
-from sgl_kernel.ops._kernels import init_custom_ar as _init_custom_ar
-from sgl_kernel.ops._kernels import int8_scaled_mm as _int8_scaled_mm
-from sgl_kernel.ops._kernels import moe_align_block_size as _moe_align_block_size
-from sgl_kernel.ops._kernels import register_graph_buffers as _register_graph_buffers
-from sgl_kernel.ops._kernels import (
-    sampling_scaling_penalties as _sampling_scaling_penalties,
-)
+import torch
+
+if torch.cuda.is_available():
+    from sgl_kernel.ops._kernels import all_reduce as _all_reduce
+    from sgl_kernel.ops._kernels import dispose as _dispose
+    from sgl_kernel.ops._kernels import (
+        get_graph_buffer_ipc_meta as _get_graph_buffer_ipc_meta,
+    )
+    from sgl_kernel.ops._kernels import init_custom_ar as _init_custom_ar
+    from sgl_kernel.ops._kernels import int8_scaled_mm as _int8_scaled_mm
+    from sgl_kernel.ops._kernels import moe_align_block_size as _moe_align_block_size
+    from sgl_kernel.ops._kernels import (
+        register_graph_buffers as _register_graph_buffers,
+    )
+    from sgl_kernel.ops._kernels import (
+        sampling_scaling_penalties as _sampling_scaling_penalties,
+    )
 
 
 def init_custom_reduce(

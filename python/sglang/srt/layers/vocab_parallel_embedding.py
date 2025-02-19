@@ -10,7 +10,6 @@ from vllm.distributed import (
     divide,
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
-    tensor_model_parallel_all_reduce,
 )
 
 from sglang.srt.layers.parameter import BasevLLMParameter
@@ -19,7 +18,7 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizeMethodBase,
     method_has_implemented_embedding,
 )
-from sglang.srt.utils import set_weight_attrs
+from sglang.srt.utils import set_weight_attrs, tensor_model_parallel_all_reduce_wrapper
 
 DEFAULT_VOCAB_PADDING_SIZE = 64
 
@@ -484,7 +483,7 @@ class VocabParallelEmbedding(torch.nn.Module):
         if self.tp_size > 1:
             output_parallel.masked_fill_(input_mask.unsqueeze(-1), 0)
             # Reduce across all the model parallel GPUs.
-            output = tensor_model_parallel_all_reduce(output_parallel)
+            output = tensor_model_parallel_all_reduce_wrapper(output_parallel)
         else:
             output = output_parallel
         return output
