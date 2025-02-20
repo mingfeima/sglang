@@ -20,9 +20,13 @@ from pathlib import Path
 
 import torch
 from setuptools import find_packages, setup
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
 
 root = Path(__file__).parent.resolve()
+
+force_cuda = os.environ.get("SGL_KERNEL_FORCE_CUDA", "0") == "1"
+
+build_cuda_sources = torch.cuda.is_available() or force_cuda
 
 
 if "bdist_wheel" in sys.argv and "--plat-name" not in sys.argv:
@@ -54,7 +58,8 @@ cutlass_default = root / "3rdparty" / "cutlass"
 cutlass = Path(os.environ.get("CUSTOM_CUTLASS_SRC_DIR", default=cutlass_default))
 flashinfer = root / "3rdparty" / "flashinfer"
 turbomind = root / "3rdparty" / "turbomind"
-include_dirs = [
+include_dirs = []
+cuda_include_dirs = [
     cutlass.resolve() / "include",
     cutlass.resolve() / "tools" / "util" / "include",
     root / "src" / "sgl-kernel" / "include",
@@ -90,26 +95,31 @@ nvcc_flags_fp8 = [
 ]
 
 sources = [
-    "src/sgl-kernel/torch_extension.cc",
-    "src/sgl-kernel/csrc/trt_reduce_internal.cu",
-    "src/sgl-kernel/csrc/trt_reduce_kernel.cu",
-    "src/sgl-kernel/csrc/moe_align_kernel.cu",
-    "src/sgl-kernel/csrc/int8_gemm_kernel.cu",
-    "src/sgl-kernel/csrc/fp8_gemm_kernel.cu",
-    "src/sgl-kernel/csrc/fp8_blockwise_gemm_kernel.cu",
-    "src/sgl-kernel/csrc/lightning_attention_decode_kernel.cu",
-    "src/sgl-kernel/csrc/fused_add_rms_norm_kernel.cu",
-    "src/sgl-kernel/csrc/eagle_utils.cu",
-    "src/sgl-kernel/csrc/speculative_sampling.cu",
-    "src/sgl-kernel/csrc/per_token_group_quant_fp8.cu",
-    "3rdparty/flashinfer/csrc/activation.cu",
-    "3rdparty/flashinfer/csrc/bmm_fp8.cu",
-    "3rdparty/flashinfer/csrc/norm.cu",
-    "3rdparty/flashinfer/csrc/sampling.cu",
-    "3rdparty/flashinfer/csrc/renorm.cu",
-    "3rdparty/flashinfer/csrc/rope.cu",
+    "src/sgl-kernel/csrc/cpu/interface.cpp",
+    "src/sgl-kernel/csrc/cpu/shm.cpp",
 ]
-
+cuda_sources = (
+    [
+        "src/sgl-kernel/torch_extension.cc",
+        "src/sgl-kernel/csrc/trt_reduce_internal.cu",
+        "src/sgl-kernel/csrc/trt_reduce_kernel.cu",
+        "src/sgl-kernel/csrc/moe_align_kernel.cu",
+        "src/sgl-kernel/csrc/int8_gemm_kernel.cu",
+        "src/sgl-kernel/csrc/fp8_gemm_kernel.cu",
+        "src/sgl-kernel/csrc/fp8_blockwise_gemm_kernel.cu",
+        "src/sgl-kernel/csrc/lightning_attention_decode_kernel.cu",
+        "src/sgl-kernel/csrc/fused_add_rms_norm_kernel.cu",
+        "src/sgl-kernel/csrc/eagle_utils.cu",
+        "src/sgl-kernel/csrc/speculative_sampling.cu",
+        "src/sgl-kernel/csrc/per_token_group_quant_fp8.cu",
+        "3rdparty/flashinfer/csrc/activation.cu",
+        "3rdparty/flashinfer/csrc/bmm_fp8.cu",
+        "3rdparty/flashinfer/csrc/norm.cu",
+        "3rdparty/flashinfer/csrc/sampling.cu",
+        "3rdparty/flashinfer/csrc/renorm.cu",
+        "3rdparty/flashinfer/csrc/rope.cu",
+    ],
+)
 enable_bf16 = os.getenv("SGL_KERNEL_ENABLE_BF16", "0") == "1"
 enable_fp8 = os.getenv("SGL_KERNEL_ENABLE_FP8", "0") == "1"
 enable_sm90a = os.getenv("SGL_KERNEL_ENABLE_SM90A", "0") == "1"
@@ -144,18 +154,26 @@ for flag in [
         pass
 
 cxx_flags = ["-O3"]
-libraries = ["c10", "torch", "torch_python", "cuda", "cublas"]
+extra_compile_args = {"cxx": cxx_flags}
+libraries = ["c10", "torch", "torch_python"]
+cuda_libraries = ["cuda", "cublas"]
+if build_cuda_sources:
+    sources.update(cuda_sources)
+    include_dirs.extend(cuda_include_dirs)
+    extra_compile_args.update({"nvcc": nvcc_flags})
+    libraries.extend(cuda_libraries)
+    Extension = CUDAExtension
+else:
+    Extension = CppExtension
+
 extra_link_args = ["-Wl,-rpath,$ORIGIN/../../torch/lib", "-L/usr/lib/x86_64-linux-gnu"]
 
 ext_modules = [
-    CUDAExtension(
+    Extension(
         name="sgl_kernel.ops._kernels",
         sources=sources,
         include_dirs=include_dirs,
-        extra_compile_args={
-            "nvcc": nvcc_flags,
-            "cxx": cxx_flags,
-        },
+        extra_compile_args=extra_compile_args,
         libraries=libraries,
         extra_link_args=extra_link_args,
         py_limited_api=True,
