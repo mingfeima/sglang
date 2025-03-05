@@ -265,6 +265,7 @@ class ForwardBatch:
             ).to(device, non_blocking=True)
             if (
                 model_runner.server_args.attention_backend != "torch_native"
+                and model_runner.server_args.attention_backend != "intel_amx"
                 and model_runner.server_args.speculative_algorithm != "NEXTN"
             ):
                 ret.extend_num_tokens = batch.extend_num_tokens
