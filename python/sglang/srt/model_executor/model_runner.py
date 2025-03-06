@@ -72,7 +72,6 @@ from sglang.srt.utils import (
     set_cuda_arch,
 )
 
-# TODO: why using 8?
 DEFAULT_MOE_PADDING_SIZE = 8
 
 logger = logging.getLogger(__name__)

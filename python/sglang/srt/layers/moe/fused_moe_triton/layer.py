@@ -18,7 +18,13 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
 )
-from sglang.srt.utils import get_bool_env_var, is_hip, permute_weight, set_weight_attrs
+from sglang.srt.utils import (
+    get_actual_shard_size,
+    get_bool_env_var,
+    is_hip,
+    permute_weight,
+    set_weight_attrs,
+)
 
 if torch.cuda.is_available():
     from sglang.srt.layers.moe.fused_moe_triton.fused_moe import fused_experts
@@ -386,13 +392,14 @@ class FusedMoE(torch.nn.Module):
         # gate_up_proj: "MergedColumnParallel", so tp sharding on output_dim
         shard_size = expert_data.shape[shard_dim] // 2
         loaded_weight_shard_dim = loaded_weight.size(shard_dim)
-        actual_shard_size = min(
-            shard_size, loaded_weight_shard_dim - shard_size * tp_rank
+        start_idx = shard_size * tp_rank
+        actual_shard_size = get_actual_shard_size(
+            shard_size, start_idx, loaded_weight_shard_dim
         )
 
         if not self.use_presharded_weights:
             loaded_weight = loaded_weight.narrow(
-                shard_dim, shard_size * tp_rank, actual_shard_size
+                shard_dim, start_idx, actual_shard_size
             )
 
         # Narrow parameter and load.
@@ -421,11 +428,12 @@ class FusedMoE(torch.nn.Module):
 
         if not self.use_presharded_weights:
             loaded_weight_shard_dim = loaded_weight.size(shard_dim)
-            actual_shard_size = min(
-                shard_size, loaded_weight_shard_dim - shard_size * tp_rank
+            start_idx = shard_size * tp_rank
+            actual_shard_size = get_actual_shard_size(
+                shard_size, start_idx, loaded_weight_shard_dim
             )
             loaded_weight = loaded_weight.narrow(
-                shard_dim, shard_size * tp_rank, actual_shard_size
+                shard_dim, start_idx, actual_shard_size
             )
 
         # w2, down_proj: Load into only logical weight of w2.
