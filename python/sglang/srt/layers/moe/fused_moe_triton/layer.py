@@ -80,7 +80,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     ):
         # Fused gate_up_proj (column parallel)
         w13_weight = torch.nn.Parameter(
-            torch.empty(
+            torch.zeros(
                 num_experts, 2 * intermediate_size, hidden_size, dtype=params_dtype
             ),
             requires_grad=False,
@@ -90,7 +90,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
 
         # down_proj (row parallel)
         w2_weight = torch.nn.Parameter(
-            torch.empty(
+            torch.zeros(
                 num_experts, hidden_size, intermediate_size, dtype=params_dtype
             ),
             requires_grad=False,
@@ -385,20 +385,24 @@ class FusedMoE(torch.nn.Module):
         # Index the loaded weight for tp sharding.
         # gate_up_proj: "MergedColumnParallel", so tp sharding on output_dim
         shard_size = expert_data.shape[shard_dim] // 2
+        loaded_weight_shard_dim = loaded_weight.size(shard_dim)
+        actual_shard_size = min(
+            shard_size, loaded_weight_shard_dim - shard_size * tp_rank
+        )
 
         if not self.use_presharded_weights:
             loaded_weight = loaded_weight.narrow(
-                shard_dim, shard_size * tp_rank, shard_size
+                shard_dim, shard_size * tp_rank, actual_shard_size
             )
 
         # Narrow parameter and load.
         # w1, gate_proj: Load into first logical weight of w13.
         if shard_id == "w1":
-            expert_data = expert_data.narrow(shard_dim, 0, shard_size)
+            expert_data = expert_data.narrow(shard_dim, 0, actual_shard_size)
         # w3, up_proj: Load into second logical weight of w13.
         else:
             assert shard_id == "w3"
-            expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
+            expert_data = expert_data.narrow(shard_dim, shard_size, actual_shard_size)
         expert_data.copy_(loaded_weight)
 
     def _load_w2(
@@ -416,11 +420,16 @@ class FusedMoE(torch.nn.Module):
         shard_size = expert_data.shape[shard_dim]
 
         if not self.use_presharded_weights:
+            loaded_weight_shard_dim = loaded_weight.size(shard_dim)
+            actual_shard_size = min(
+                shard_size, loaded_weight_shard_dim - shard_size * tp_rank
+            )
             loaded_weight = loaded_weight.narrow(
-                shard_dim, shard_size * tp_rank, shard_size
+                shard_dim, shard_size * tp_rank, actual_shard_size
             )
 
         # w2, down_proj: Load into only logical weight of w2.
+        expert_data = expert_data.narrow(shard_dim, 0, actual_shard_size)
         expert_data.copy_(loaded_weight)
 
     def _load_single_value(

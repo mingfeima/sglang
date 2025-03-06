@@ -45,6 +45,7 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import Sampler
 from sglang.srt.layers.torchao_utils import apply_torchao_config_to_model
+from sglang.srt.layers.vocab_parallel_embedding import pad_vocab_size
 from sglang.srt.lora.lora_manager import LoRAManager
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.mem_cache.memory_pool import (
@@ -71,6 +72,9 @@ from sglang.srt.utils import (
     set_cuda_arch,
 )
 
+# TODO: why using 8?
+DEFAULT_MOE_PADDING_SIZE = 8
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,12 +93,12 @@ class ModelRunner:
         is_draft_worker: bool = False,
     ):
         # Parse args
-        self.model_config = model_config
         self.mem_fraction_static = mem_fraction_static
         self.device = server_args.device
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
         self.tp_size = tp_size
+        self.model_config = self.update_config(model_config)
         self.dist_port = nccl_port
         self.server_args = server_args
         self.is_draft_worker = is_draft_worker
@@ -233,6 +237,33 @@ class ModelRunner:
         else:
             self.cuda_graph_runner = None
             self.init_attention_backend()
+
+    def update_config(self, model_config: ModelConfig) -> ModelConfig:
+        # Support the case where the num_attention_heads is not divisible by the TP size.
+        if model_config.num_attention_heads % self.tp_size != 0:
+            query_heads_per_kv = (
+                model_config.num_attention_heads
+                // model_config.get_total_num_kv_heads()
+            )
+            total_kv_heads = model_config.get_total_num_kv_heads()
+            num_key_value_heads = pad_vocab_size(total_kv_heads, self.tp_size)
+            model_config.num_key_value_heads = num_key_value_heads
+            model_config.hf_config.num_key_value_heads = num_key_value_heads
+            model_config.hf_text_config.num_key_value_heads = num_key_value_heads
+
+            num_attention_heads = num_key_value_heads * query_heads_per_kv
+            model_config.num_attention_heads = num_attention_heads
+            model_config.hf_config.num_attention_heads = num_attention_heads
+            model_config.hf_text_config.num_attention_heads = num_attention_heads
+
+            moe_intermediate_size = model_config.hf_config.moe_intermediate_size
+            moe_intermediate_size = pad_vocab_size(
+                moe_intermediate_size, self.tp_size * DEFAULT_MOE_PADDING_SIZE
+            )
+            model_config.hf_config.moe_intermediate_size = moe_intermediate_size
+            model_config.hf_text_config.moe_intermediate_size = moe_intermediate_size
+
+        return model_config
 
     def init_torch_distributed(self):
         logger.info("Init torch distributed begin.")
