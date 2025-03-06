@@ -95,8 +95,10 @@ nvcc_flags_fp8 = [
 ]
 
 sources = [
+    "src/sgl-kernel/csrc/cpu/norm.cpp",
     "src/sgl-kernel/csrc/cpu/interface.cpp",
     "src/sgl-kernel/csrc/cpu/shm.cpp",
+    "src/sgl-kernel/csrc/cpu/torch_extension_cpu.cpp",
 ]
 cuda_sources = (
     [
@@ -153,8 +155,13 @@ for flag in [
     except ValueError:
         pass
 
-cxx_flags = ["-O3"]
-extra_compile_args = {"cxx": cxx_flags}
+extra_compile_args = {"cxx": [
+    "-O3",
+    "-Wno-unknown-pragmas",
+    "-march=native",
+    "-fopenmp",
+    ]
+}
 libraries = ["c10", "torch", "torch_python"]
 cuda_libraries = ["cuda", "cublas"]
 if build_cuda_sources:
