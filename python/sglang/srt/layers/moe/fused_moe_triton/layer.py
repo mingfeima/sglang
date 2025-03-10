@@ -115,9 +115,11 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             torch.cuda.empty_cache()
 
         # Pack weight for get better performance on CPU
-        if layer.w13_weight.device == torch.device(
-            "cpu"
-        ) and layer.w2_weight.device == torch.device("cpu"):
+        if (
+            layer.w13_weight.device == torch.device("cpu")
+            and layer.w2_weight.device == torch.device("cpu")
+            and torch._C._cpu._is_amx_tile_supported()
+        ):
             layer.w13_weight = torch.nn.Parameter(
                 convert_weight_packed(layer.w13_weight.data),
                 requires_grad=False,
@@ -221,30 +223,45 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         correction_bias: Optional[torch.Tensor] = None,
         activation: str = "silu",
     ) -> torch.Tensor:
-        assert activation == "silu", f"{activation=} is not supported."
+        assert activation == "silu", f"activation = {activation} is not supported."
 
-        topk_weights, topk_ids = select_experts(
-            hidden_states=x,
-            router_logits=router_logits,
-            use_grouped_topk=use_grouped_topk,
-            top_k=top_k,
-            renormalize=renormalize,
-            topk_group=topk_group,
-            num_expert_group=num_expert_group,
-            custom_routing_function=custom_routing_function,
-            correction_bias=correction_bias,
-            torch_native=True,
-        )
+        if torch._C._cpu._is_amx_tile_supported():
+            topk_weights, topk_ids = select_experts(
+                hidden_states=x,
+                router_logits=router_logits,
+                use_grouped_topk=use_grouped_topk,
+                top_k=top_k,
+                renormalize=renormalize,
+                topk_group=topk_group,
+                num_expert_group=num_expert_group,
+                custom_routing_function=custom_routing_function,
+                correction_bias=correction_bias,
+                torch_native=True,
+            )
 
-        return fused_experts_cpu(
-            x,
-            layer.w13_weight,
-            layer.w2_weight,
-            topk_weights,
-            topk_ids,
-            False,  # inplace
-            True,  # is_vnni
-        )
+            return fused_experts_cpu(
+                x,
+                layer.w13_weight,
+                layer.w2_weight,
+                topk_weights,
+                topk_ids,
+                False,  # inplace
+                True,  # is_vnni
+            )
+        else:
+            return moe_forward_native(
+                layer,
+                x,
+                use_grouped_topk,
+                top_k,
+                router_logits,
+                renormalize,
+                topk_group,
+                num_expert_group,
+                custom_routing_function,
+                correction_bias,
+                activation,
+            )
 
     def forward_tpu(self, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError("The TPU backend currently does not support MoE.")
