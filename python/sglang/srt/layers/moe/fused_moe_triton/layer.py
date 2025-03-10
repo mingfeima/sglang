@@ -28,6 +28,8 @@ else:
 
 import logging
 
+from sgl_kernel.ops._kernels import convert_weight_packed, fused_experts_cpu
+
 is_hip_ = is_hip()
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,20 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 requires_grad=False,
             )
             torch.cuda.empty_cache()
+
+        # Pack weight for get better performance on CPU
+        if layer.w13_weight.device == torch.device(
+            "cpu"
+        ) and layer.w2_weight.device == torch.device("cpu"):
+            layer.w13_weight = torch.nn.Parameter(
+                convert_weight_packed(layer.w13_weight.data),
+                requires_grad=False,
+            )
+            layer.w2_weight = torch.nn.Parameter(
+                convert_weight_packed(layer.w2_weight.data),
+                requires_grad=False,
+            )
+
         return
 
     def apply(
@@ -205,18 +221,29 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         correction_bias: Optional[torch.Tensor] = None,
         activation: str = "silu",
     ) -> torch.Tensor:
-        return moe_forward_native(
-            layer,
+        assert activation == "silu", f"{activation=} is not supported."
+
+        topk_weights, topk_ids = select_experts(
+            hidden_states=x,
+            router_logits=router_logits,
+            use_grouped_topk=use_grouped_topk,
+            top_k=top_k,
+            renormalize=renormalize,
+            topk_group=topk_group,
+            num_expert_group=num_expert_group,
+            custom_routing_function=custom_routing_function,
+            correction_bias=correction_bias,
+            torch_native=True,
+        )
+
+        return fused_experts_cpu(
             x,
-            use_grouped_topk,
-            top_k,
-            router_logits,
-            renormalize,
-            topk_group,
-            num_expert_group,
-            custom_routing_function,
-            correction_bias,
-            activation,
+            layer.w13_weight,
+            layer.w2_weight,
+            topk_weights,
+            topk_ids,
+            False,  # inplace
+            True,  # is_vnni
         )
 
     def forward_tpu(self, *args, **kwargs) -> torch.Tensor:
