@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter, UninitializedParameter
 
+from sglang.srt.cpu_utils import get_actual_shard_size, reset_param_data_if_needed
 from sglang.srt.distributed import (
     divide,
     get_tensor_model_parallel_rank,
@@ -150,7 +151,7 @@ class UnquantizedLinearMethod(LinearMethodBase):
         **extra_weight_attrs,
     ):
         weight = Parameter(
-            torch.zeros(
+            torch.empty(
                 sum(output_partition_sizes),
                 input_size_per_partition,
                 dtype=params_dtype,
@@ -257,7 +258,7 @@ class ReplicatedLinear(LinearBase):
 
         if bias:
             self.bias = Parameter(
-                torch.zeros(self.output_size, dtype=self.params_dtype)
+                torch.empty(self.output_size, dtype=self.params_dtype)
             )
             set_weight_attrs(
                 self.bias,
@@ -371,7 +372,7 @@ class ColumnParallelLinear(LinearBase):
         )
         if bias:
             self.bias = Parameter(
-                torch.zeros(self.output_size_per_partition, dtype=params_dtype)
+                torch.empty(self.output_size_per_partition, dtype=params_dtype)
             )
             set_weight_attrs(
                 self.bias,
@@ -404,8 +405,6 @@ class ColumnParallelLinear(LinearBase):
         if output_dim is not None and not use_bitsandbytes_4bit:
             shard_size = param_data.shape[output_dim]
             start_idx = self.tp_rank * shard_size
-            from sglang.srt.cpu_utils import get_actual_shard_size
-
             actual_shard_size = get_actual_shard_size(
                 shard_size, start_idx, loaded_weight.size(output_dim)
             )
@@ -413,6 +412,16 @@ class ColumnParallelLinear(LinearBase):
                 loaded_weight = loaded_weight.narrow(
                     output_dim, start_idx, actual_shard_size
                 )
+
+            # [Note] Reset padded weights to zero.
+            # If the actual shard size is less than the shard size, we need to reset
+            # the padded param_data to zero and then copy the loaded_weight into it.
+            reset_param_data_if_needed(
+                param_data,
+                output_dim,
+                actual_shard_size,
+                shard_size - actual_shard_size,
+            )
             param_data = param_data.narrow(output_dim, 0, actual_shard_size)
 
         # Special case for loading scales off disk, which often do not
@@ -620,8 +629,6 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
             param_data = param_data.narrow(output_dim, shard_offset, shard_size)
             start_idx = self.tp_rank * shard_size
-            from sglang.srt.cpu_utils import get_actual_shard_size
-
             actual_shard_size = get_actual_shard_size(
                 shard_size, start_idx, loaded_weight.size(output_dim)
             )
@@ -631,6 +638,15 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                 loaded_weight = loaded_weight.narrow(
                     output_dim, start_idx, actual_shard_size
                 )
+
+            # See [Note] Reset padded weights to zero.
+            reset_param_data_if_needed(
+                param_data,
+                output_dim,
+                actual_shard_size,
+                shard_size - actual_shard_size,
+            )
+
             param_data = param_data.narrow(output_dim, 0, actual_shard_size)
         # Special case for AQLM codebooks.
         elif is_metadata:
@@ -1192,7 +1208,7 @@ class RowParallelLinear(LinearBase):
             )
 
         if bias:
-            self.bias = Parameter(torch.zeros(self.output_size, dtype=params_dtype))
+            self.bias = Parameter(torch.empty(self.output_size, dtype=params_dtype))
             set_weight_attrs(
                 self.bias,
                 {
@@ -1230,13 +1246,16 @@ class RowParallelLinear(LinearBase):
         ):
             shard_size = param_data.shape[input_dim]
             start_idx = self.tp_rank * shard_size
-            from sglang.srt.cpu_utils import get_actual_shard_size
-
             actual_shard_size = get_actual_shard_size(
                 shard_size, start_idx, loaded_weight.size(input_dim)
             )
             loaded_weight = loaded_weight.narrow(
                 input_dim, start_idx, actual_shard_size
+            )
+
+            # See [Note] Reset padded weights to zero.
+            reset_param_data_if_needed(
+                param_data, input_dim, actual_shard_size, shard_size - actual_shard_size
             )
             param_data = param_data.narrow(input_dim, 0, actual_shard_size)
 
