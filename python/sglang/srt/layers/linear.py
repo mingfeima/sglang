@@ -28,7 +28,7 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizeMethodBase,
 )
 from sglang.srt.layers.quantization.fp8_utils import BlockQuantScaleParameter
-from sglang.srt.utils import get_actual_shard_size, set_weight_attrs
+from sglang.srt.utils import set_weight_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +404,8 @@ class ColumnParallelLinear(LinearBase):
         if output_dim is not None and not use_bitsandbytes_4bit:
             shard_size = param_data.shape[output_dim]
             start_idx = self.tp_rank * shard_size
+            from sglang.srt.cpu_utils import get_actual_shard_size
+
             actual_shard_size = get_actual_shard_size(
                 shard_size, start_idx, loaded_weight.size(output_dim)
             )
@@ -618,6 +620,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
             param_data = param_data.narrow(output_dim, shard_offset, shard_size)
             start_idx = self.tp_rank * shard_size
+            from sglang.srt.cpu_utils import get_actual_shard_size
+
             actual_shard_size = get_actual_shard_size(
                 shard_size, start_idx, loaded_weight.size(output_dim)
             )
@@ -1226,6 +1230,8 @@ class RowParallelLinear(LinearBase):
         ):
             shard_size = param_data.shape[input_dim]
             start_idx = self.tp_rank * shard_size
+            from sglang.srt.cpu_utils import get_actual_shard_size
+
             actual_shard_size = get_actual_shard_size(
                 shard_size, start_idx, loaded_weight.size(input_dim)
             )
