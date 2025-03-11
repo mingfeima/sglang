@@ -6,7 +6,12 @@ from typing import Callable, List, Optional, Tuple
 
 import torch
 
-from sglang.srt.cpu_utils import get_actual_shard_size, reset_param_data_if_needed
+from sglang.srt.cpu_utils import (
+    get_actual_shard_size,
+    need_weight_pack,
+    reset_param_data_if_needed,
+    support_amx,
+)
 from sglang.srt.custom_op import CustomOp
 from sglang.srt.distributed import (
     get_tensor_model_parallel_rank,
@@ -115,11 +120,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             torch.cuda.empty_cache()
 
         # Pack weight for get better performance on CPU
-        if (
-            layer.w13_weight.device == torch.device("cpu")
-            and layer.w2_weight.device == torch.device("cpu")
-            and torch._C._cpu._is_amx_tile_supported()
-        ):
+        if need_weight_pack([layer.w13_weight, layer.w2_weight]):
             layer.w13_weight = torch.nn.Parameter(
                 convert_weight_packed(layer.w13_weight.data),
                 requires_grad=False,
@@ -225,7 +226,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     ) -> torch.Tensor:
         assert activation == "silu", f"activation = {activation} is not supported."
 
-        if torch._C._cpu._is_amx_tile_supported():
+        if support_amx():
             topk_weights, topk_ids = select_experts(
                 hidden_states=x,
                 router_logits=router_logits,

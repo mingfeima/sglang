@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import torch
+
 if TYPE_CHECKING:
     from sglang.srt.configs.model_config import ModelConfig
 
@@ -49,3 +51,16 @@ def reset_param_data_if_needed(param_data, dim, start, length):
 
     param_data.narrow(dim, start, length).zero_()
     return
+
+
+def support_amx():
+    return torch._C._cpu._is_amx_tile_supported()
+
+
+def need_weight_pack(weight_tensors):
+    if not support_amx():
+        return False
+
+    return all(
+        weight_tensor.device == torch.device("cpu") for weight_tensor in weight_tensors
+    )
