@@ -26,6 +26,7 @@ import torch.distributed as dist
 from sglang.srt.configs.device_config import DeviceConfig
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.configs.model_config import AttentionArch, ModelConfig
+from sglang.srt.cpu_utils import update_config
 from sglang.srt.distributed import (
     get_tp_group,
     init_distributed_environment,
@@ -89,12 +90,14 @@ class ModelRunner:
         is_draft_worker: bool = False,
     ):
         # Parse args
-        self.model_config = model_config
         self.mem_fraction_static = mem_fraction_static
         self.device = server_args.device
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
         self.tp_size = tp_size
+        if self.device == "cpu":
+            model_config = update_config(model_config, self.tp_size)
+        self.model_config = model_config
         self.dist_port = nccl_port
         self.server_args = server_args
         self.is_draft_worker = is_draft_worker
