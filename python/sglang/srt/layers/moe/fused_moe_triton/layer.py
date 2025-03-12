@@ -31,6 +31,9 @@ if torch.cuda.is_available():
 else:
     fused_experts = None  # type: ignore
 
+if cpu_has_amx_support():
+    import sgl_kernel.cpu
+
 import logging
 
 is_hip_ = is_hip()
@@ -224,8 +227,6 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         assert activation == "silu", f"activation = {activation} is not supported."
 
         if cpu_has_amx_support():
-            from sgl_kernel.cpu import fused_experts
-
             topk_weights, topk_ids = select_experts(
                 hidden_states=x,
                 router_logits=router_logits,
@@ -239,7 +240,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 torch_native=True,
             )
 
-            return fused_experts(
+            return sgl_kernel.cpu.fused_experts(
                 x,
                 layer.w13_weight,
                 layer.w2_weight,
