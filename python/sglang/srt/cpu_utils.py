@@ -65,7 +65,9 @@ def cpu_has_amx_support():
 
 
 def prepack_weight_if_needed(weight):
-    if not cpu_has_amx_support() or weight.device != torch.device("cpu"):
+    if weight.device != torch.device("cpu"):
+        return weight
+    if not cpu_has_amx_support():
         return weight
 
     return convert_weight_packed(weight)
