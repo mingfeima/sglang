@@ -11,6 +11,13 @@ from sglang.srt.layers.vocab_parallel_embedding import pad_vocab_size
 
 DEFAULT_MOE_PADDING_SIZE = 32
 
+try:
+    from sgl_kernel.cpu import convert_weight_packed
+
+    is_intel_amx_backend_available = True
+except:
+    is_intel_amx_backend_available = False
+
 
 def update_config(model_config: ModelConfig, tp_size: int) -> ModelConfig:
     # Support the case where the num_attention_heads is not divisible by the TP size.
@@ -53,14 +60,12 @@ def reset_param_data_if_needed(param_data, dim, start, length):
     return
 
 
-def support_amx():
-    return torch._C._cpu._is_amx_tile_supported()
+def cpu_has_amx_support():
+    return torch._C._cpu._is_amx_tile_supported() and is_intel_amx_backend_available
 
 
-def need_weight_pack(weight_tensors):
-    if not support_amx():
-        return False
+def prepack_weight_if_needed(weight):
+    if not cpu_has_amx_support() or weight.device != torch.device("cpu"):
+        return weight
 
-    return all(
-        weight_tensor.device == torch.device("cpu") for weight_tensor in weight_tensors
-    )
+    return convert_weight_packed(weight)

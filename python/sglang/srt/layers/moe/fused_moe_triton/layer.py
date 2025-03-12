@@ -7,10 +7,10 @@ from typing import Callable, List, Optional, Tuple
 import torch
 
 from sglang.srt.cpu_utils import (
+    cpu_has_amx_support,
     get_actual_shard_size,
-    need_weight_pack,
+    prepack_weight_if_needed,
     reset_param_data_if_needed,
-    support_amx,
 )
 from sglang.srt.custom_op import CustomOp
 from sglang.srt.distributed import (
@@ -32,8 +32,6 @@ else:
     fused_experts = None  # type: ignore
 
 import logging
-
-from sgl_kernel.ops._kernels import convert_weight_packed, fused_experts_cpu
 
 is_hip_ = is_hip()
 
@@ -120,15 +118,14 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             torch.cuda.empty_cache()
 
         # Pack weight for get better performance on CPU
-        if need_weight_pack([layer.w13_weight, layer.w2_weight]):
-            layer.w13_weight = torch.nn.Parameter(
-                convert_weight_packed(layer.w13_weight.data),
-                requires_grad=False,
-            )
-            layer.w2_weight = torch.nn.Parameter(
-                convert_weight_packed(layer.w2_weight.data),
-                requires_grad=False,
-            )
+        layer.w13_weight = torch.nn.Parameter(
+            prepack_weight_if_needed(layer.w13_weight.data),
+            requires_grad=False,
+        )
+        layer.w2_weight = torch.nn.Parameter(
+            prepack_weight_if_needed(layer.w2_weight.data),
+            requires_grad=False,
+        )
 
         return
 
@@ -226,7 +223,9 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     ) -> torch.Tensor:
         assert activation == "silu", f"activation = {activation} is not supported."
 
-        if support_amx():
+        if cpu_has_amx_support():
+            from sgl_kernel.cpu import fused_experts
+
             topk_weights, topk_ids = select_experts(
                 hidden_states=x,
                 router_logits=router_logits,
@@ -240,7 +239,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 torch_native=True,
             )
 
-            return fused_experts_cpu(
+            return fused_experts(
                 x,
                 layer.w13_weight,
                 layer.w2_weight,
