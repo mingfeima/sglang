@@ -245,8 +245,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 layer.w2_weight,
                 topk_weights,
                 topk_ids,
-                False,  # inplace
-                True,  # is_vnni
+                True,  # inplace
             )
         else:
             return moe_forward_native(
