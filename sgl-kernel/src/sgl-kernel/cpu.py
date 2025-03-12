@@ -9,7 +9,7 @@ def fused_experts(
     topk_weights,
     topk_ids,
     inplace,
-    is_vnni,
+    is_vnni=True,
 ):
     return sgl_kernel.ops._kernels.fused_experts_cpu(
         x,
