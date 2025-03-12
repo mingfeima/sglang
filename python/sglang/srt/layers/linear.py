@@ -8,7 +8,12 @@ import torch
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter, UninitializedParameter
 
-from sglang.srt.cpu_utils import get_actual_shard_size, reset_param_data_if_needed
+from sglang.srt.cpu_utils import (
+    cpu_has_amx_support,
+    get_actual_shard_size,
+    prepack_weight_if_needed,
+    reset_param_data_if_needed,
+)
 from sglang.srt.distributed import (
     divide,
     get_tensor_model_parallel_rank,
@@ -30,6 +35,9 @@ from sglang.srt.layers.quantization.base_config import (
 )
 from sglang.srt.layers.quantization.fp8_utils import BlockQuantScaleParameter
 from sglang.srt.utils import set_weight_attrs
+
+if cpu_has_amx_support():
+    import sgl_kernel.cpu
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +170,18 @@ class UnquantizedLinearMethod(LinearMethodBase):
         layer.register_parameter("weight", weight)
         set_weight_attrs(weight, extra_weight_attrs)
 
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        # Pack weight for get better performance on CPU
+        layer.weight = torch.nn.Parameter(
+            prepack_weight_if_needed(layer.weight.data),
+            requires_grad=False,
+        )
+
+        if layer.weight.device == torch.device("cpu") and cpu_has_amx_support():
+            self.fwd = sgl_kernel.cpu.weight_packed_linear
+        else:
+            self.fwd = F.linear
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -169,7 +189,7 @@ class UnquantizedLinearMethod(LinearMethodBase):
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
-        return F.linear(x, layer.weight, bias)
+        return self.fwd(x, layer.weight, bias)
 
 
 class LinearBase(torch.nn.Module):
