@@ -177,10 +177,9 @@ class UnquantizedLinearMethod(LinearMethodBase):
             requires_grad=False,
         )
 
-        if layer.weight.device == torch.device("cpu") and cpu_has_amx_support():
-            self.fwd = sgl_kernel.cpu.weight_packed_linear
-        else:
-            self.fwd = F.linear
+        self.use_intel_amx_backend = (
+            layer.weight.device == torch.device("cpu") and cpu_has_amx_support()
+        )
 
     def apply(
         self,
@@ -189,7 +188,10 @@ class UnquantizedLinearMethod(LinearMethodBase):
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
-        return self.fwd(x, layer.weight, bias)
+        if self.use_intel_amx_backend:
+            return sgl_kernel.cpu.weight_packed_linear(x, layer.weight, bias)
+
+        return F.linear(x, layer.weight, bias)
 
 
 class LinearBase(torch.nn.Module):
