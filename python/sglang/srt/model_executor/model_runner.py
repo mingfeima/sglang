@@ -72,6 +72,7 @@ from sglang.srt.utils import (
     set_cpu_offload_max_bytes,
     set_cuda_arch,
 )
+from sglang.srt.cpu_utils import cpu_has_amx_support
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class ModelRunner:
         # Model-specific adjustment
         if (self.server_args.attention_backend == "intel_amx"
             and self.server_args.device == "cpu"
-            and not torch._C._cpu._is_amx_tile_supported()
+            and not cpu_has_amx_support()
         ):
             logger.info(
                 "The current platform does not support Intel AMX, will fallback to torch_native backend."
