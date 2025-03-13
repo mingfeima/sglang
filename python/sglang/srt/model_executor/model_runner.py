@@ -38,6 +38,7 @@ from sglang.srt.layers.attention.double_sparsity_backend import DoubleSparseAttn
 from sglang.srt.layers.attention.flashinfer_backend import FlashInferAttnBackend
 from sglang.srt.layers.attention.torch_native_backend import TorchNativeAttnBackend
 from sglang.srt.layers.attention.triton_backend import TritonAttnBackend
+from sglang.srt.layers.attention.intel_amx_backend import IntelAMXAttnBackend
 from sglang.srt.layers.dp_attention import (
     get_attention_tp_group,
     get_attention_tp_size,
@@ -71,6 +72,7 @@ from sglang.srt.utils import (
     set_cpu_offload_max_bytes,
     set_cuda_arch,
 )
+from sglang.srt.cpu_utils import cpu_has_amx_support
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,17 @@ class ModelRunner:
         )
 
         # Model-specific adjustment
+        if (self.server_args.attention_backend == "intel_amx"
+            and self.server_args.device == "cpu"
+            and not cpu_has_amx_support()
+        ):
+            logger.info(
+                "The current platform does not support Intel AMX, will fallback to torch_native backend."
+            )
+            self.server_args.attention_backend = "torch_native"
+            if self.model_config.attention_arch == AttentionArch.MLA:
+                self.server_args.disable_mla = True
+
         if (
             self.model_config.attention_arch == AttentionArch.MLA
             and not self.server_args.disable_mla
@@ -729,6 +742,8 @@ class ModelRunner:
                 self.attn_backend = TritonAttnBackend(self)
         elif self.server_args.attention_backend == "torch_native":
             self.attn_backend = TorchNativeAttnBackend(self)
+        elif self.server_args.attention_backend == "intel_amx":
+                self.attn_backend = IntelAMXAttnBackend(self)
         else:
             raise ValueError(
                 f"Invalid attention backend: {self.server_args.attention_backend}"
