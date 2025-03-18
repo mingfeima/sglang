@@ -180,12 +180,13 @@ def select_experts(
         assert topk_group is not None
         assert num_expert_group is not None
         if correction_bias is None:
-            if cpu_has_amx_support():
+            device = hidden_states.device
+            if device == torch.device("cpu") and cpu_has_amx_support():
                 M = hidden_states.size(0)
                 topk_weights = torch.empty(
-                    M, top_k, dtype=torch.float32, device=hidden_states.device
+                    M, top_k, dtype=torch.float32, device=device
                 )
-                topk_ids = torch.empty(M, top_k, dtype=torch.int32, device=hidden_states.device)
+                topk_ids = torch.empty(M, top_k, dtype=torch.int32, device=device)
                 sgl_kernel.cpu.grouped_topk(
                     topk_weights,
                     topk_ids,
