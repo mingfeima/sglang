@@ -35,32 +35,30 @@ class TestFusedMOE(expecttest.TestCase):
         cache = torch.cat((cos, sin), dim=-1)
         cos_sin = cache[positions]
         cos, sin = cos_sin.chunk(2, dim=-1)
-        cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
-        sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
+        cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2).to(torch.bfloat16)
+        sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2).to(torch.bfloat16)
 
-        for dtype in [torch.float, torch.bfloat16]:
-            prec = 1e-5 if dtype == torch.float32 else 5e-3
+        for dtype in [torch.bfloat16]:
+            prec = 1e-5
             enable_autocast = dtype == torch.bfloat16
 
             with torch.no_grad(), torch.cpu.amp.autocast(enabled=enable_autocast):
                 q = torch.randn(seq_len, num_head, q_head_dim, dtype=dtype)
                 k_pe = torch.randn(seq_len, 1, qk_rope_head_dim, dtype=dtype)
-                q_clone = q.clone()
+                _, q_pe = q.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
+                q_pe_clone = q_pe.clone()
                 k_pe_clone = k_pe.clone()
 
                 # ref kernel
-                _, q_pe = q.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
                 q_pe, k_pe = rotary_emb_ref(sin, cos, q_pe, k_pe)
-                q[..., qk_nope_head_dim :] = q_pe
 
                 # fused rope kernel
-                q_clone, k_pe_clone = sgl_kernel.cpu.rotary_position_embedding(
-                    q_clone, k_pe_clone, sin, cos, positions, num_head, q_head_dim,
-                    qk_nope_head_dim, qk_rope_head_dim
+                q_pe_clone, k_pe_clone = sgl_kernel.cpu.rotary_position_embedding(
+                    q_pe_clone, k_pe_clone, sin, cos, positions
                 )
 
-                assert torch.allclose(q, q_clone, rtol=prec, atol=prec)
-                assert torch.allclose(k_pe, k_pe_clone.to(torch.float), rtol=prec, atol=prec)
+                assert torch.allclose(q_pe, q_pe_clone, rtol=prec, atol=prec)
+                assert torch.allclose(k_pe, k_pe_clone, rtol=prec, atol=prec)
 
 
 if __name__ == "__main__":

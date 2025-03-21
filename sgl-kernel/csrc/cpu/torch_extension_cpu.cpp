@@ -84,15 +84,11 @@ void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> proc
 // fused rope
 std::tuple<at::Tensor, at::Tensor>
 rotary_position_embedding_cpu(
-    at::Tensor& q,
+    at::Tensor& q_pe,
     at::Tensor& k_pe,
     at::Tensor& t_emb_pos_sin,
     at::Tensor& t_emb_pos_cos,
-    at::Tensor& t_pos,
-    int64_t N, // N: number of head, H: head size
-    int64_t H,
-    int64_t offset,
-    int64_t rotary_dim);
+    at::Tensor& t_pos);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   // activation
