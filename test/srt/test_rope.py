@@ -4,7 +4,7 @@ import expecttest
 import torch
 import sgl_kernel.cpu
 
-class TestFusedMOE(expecttest.TestCase):
+class TestROPE(expecttest.TestCase):
     def test_deepseek_v2_rope(self):
         def _rotate_gptj(x: torch.Tensor) -> torch.Tensor:
             x1 = x[..., ::2]
@@ -39,8 +39,7 @@ class TestFusedMOE(expecttest.TestCase):
         sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2).to(torch.bfloat16)
 
         for dtype in [torch.bfloat16]:
-            prec = 1e-5
-            enable_autocast = dtype == torch.bfloat16
+            enable_autocast = True
 
             with torch.no_grad(), torch.cpu.amp.autocast(enabled=enable_autocast):
                 q = torch.randn(seq_len, num_head, q_head_dim, dtype=dtype)
@@ -57,8 +56,8 @@ class TestFusedMOE(expecttest.TestCase):
                     q_pe_clone, k_pe_clone, sin, cos
                 )
 
-                assert torch.allclose(q_pe, q_pe_clone, rtol=prec, atol=prec)
-                assert torch.allclose(k_pe, k_pe_clone, rtol=prec, atol=prec)
+                assert torch.allclose(q_pe, q_pe_clone)
+                assert torch.allclose(k_pe, k_pe_clone)
 
 
 if __name__ == "__main__":

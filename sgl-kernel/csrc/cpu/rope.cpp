@@ -39,9 +39,8 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
     auto out_stride_ks = key.stride(0);
     auto emb_pos_sin_ptr = t_emb_pos_sin.data_ptr<T>(); // [MP][1][HR]
     auto emb_pos_cos_ptr = t_emb_pos_cos.data_ptr<T>(); // [MP][1][HR]
-    // auto pos_ptr = t_pos.data_ptr<long>(); // [S]
     {
-// #pragma omp parallel for collapse(2)
+#pragma omp parallel for collapse(2)
     for (int s = 0; s < S; s++) {
         for (int n = 0; n < N; n++) {
             auto in_offset_q = s * in_stride_s + n * rotary_dim;
@@ -51,8 +50,6 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
             T* sin_start = nullptr;
             T* cos_start = nullptr;
             // step 0) get the rotary position embedding for the current position
-            // auto start_idx = 0;
-            // p = pos_ptr[s];
             sin_start = emb_pos_sin_ptr + s * HR;
             cos_start = emb_pos_cos_ptr + s * HR;
             // step 1) apply_rotary_pos_emb for the rotary_dim elements in every
@@ -64,8 +61,6 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
                 auto sin2 = sin_start[h + 1];
                 auto in1 = in_ptr[in_offset_q + h];
                 auto in2 = in_ptr[in_offset_q + h + 1];
-                // std::cout<<"sin cos "<<sin1<<" "<<cos1<<" "<<sin2<<" "<<cos2<<"\n";
-                // std::cout<<"in "<<in1 <<" "<<in2<<"\n";
                 auto out1 = in1 * cos1 - in2 * sin1;
                 auto out2 = in2 * cos2 + in1 * sin2;
                 auto out1_offset = out_offset_q + h;

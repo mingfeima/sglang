@@ -81,7 +81,7 @@ void initialize(int size, int rank);
 // shared mmeory all_reduce
 void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, py::object op);
 
-// fused rope
+// rope
 std::tuple<at::Tensor, at::Tensor>
 rotary_position_embedding_cpu(
     at::Tensor& q_pe,

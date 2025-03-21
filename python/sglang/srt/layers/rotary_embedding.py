@@ -741,9 +741,7 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         else:
             query_rot = query[..., : self.rotary_dim]
             key_rot = key[..., : self.rotary_dim]
-            print("ref ", query.shape, key.shape, self.rotary_dim)
             if self.rotary_dim < self.head_size:
-                print("extend")
                 query_pass = query[..., self.rotary_dim :]
                 key_pass = key[..., self.rotary_dim :]
 
