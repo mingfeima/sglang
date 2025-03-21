@@ -200,3 +200,25 @@ def int8_scaled_mm(
 
 def per_token_quant_int8(x):
     return sgl_kernel.common_ops.per_token_quant_int8_cpu(x)
+def rotary_position_embedding(
+    q,
+    k_pe,
+    t_emb_pos_sin,
+    t_emb_pos_cos,
+    t_pos,
+    N,  # N: number of head, H: head size
+    H,
+    offset,
+    rotary_dim,
+):
+    return sgl_kernel.common_ops.rotary_position_embedding_cpu(
+        q,
+        k_pe,
+        t_emb_pos_sin,
+        t_emb_pos_cos,
+        t_pos,
+        N,
+        H,
+        offset,
+        rotary_dim,
+    )
