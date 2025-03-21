@@ -8,8 +8,7 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
     at::Tensor& q_pe,
     at::Tensor& k_pe,
     at::Tensor& t_emb_pos_sin,
-    at::Tensor& t_emb_pos_cos,
-    at::Tensor& t_pos) {
+    at::Tensor& t_emb_pos_cos) {
     auto in_sizes = q_pe.sizes(); // in[S][N][rotary_dim]
     auto S = in_sizes[0]; // seq len
     auto N = in_sizes[1]; // number of head
@@ -17,20 +16,19 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
     auto MP = t_emb_pos_sin.size(0); // Max Pos
     auto HR = t_emb_pos_sin.size(2); // rotary_dim
     auto in_stride_s = q_pe.stride(0);
+    auto NK = 1;
+    auto HK = k_pe.size(-1);
     CHECK_EQ(MP, S);
     CHECK_EQ(MP, t_emb_pos_cos.size(0));
     CHECK_EQ(HR, rotary_dim);
     CHECK_EQ(HR, t_emb_pos_cos.size(2));
     CHECK_EQ(N, in_sizes[1]);
     CHECK_EQ(rotary_dim, in_sizes[2]);
+    CHECK_EQ(HK, rotary_dim);
 
     auto in_ptr = q_pe.data_ptr<T>();
     auto k_pe_ptr = k_pe.data_ptr<T>();
     auto k_pe_stride_s = k_pe.stride(0);
-
-    auto NK = 1;
-    auto HK = k_pe.size(-1);
-    CHECK_EQ(HK, rotary_dim);
 
     // initialize empty q/k/v
     auto query = at::empty({S, N, rotary_dim}, q_pe.options());
@@ -41,9 +39,9 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
     auto out_stride_ks = key.stride(0);
     auto emb_pos_sin_ptr = t_emb_pos_sin.data_ptr<T>(); // [MP][1][HR]
     auto emb_pos_cos_ptr = t_emb_pos_cos.data_ptr<T>(); // [MP][1][HR]
-    auto pos_ptr = t_pos.data_ptr<long>(); // [S]
+    // auto pos_ptr = t_pos.data_ptr<long>(); // [S]
     {
-#pragma omp parallel for collapse(2)
+// #pragma omp parallel for collapse(2)
     for (int s = 0; s < S; s++) {
         for (int n = 0; n < N; n++) {
             auto in_offset_q = s * in_stride_s + n * rotary_dim;
@@ -53,10 +51,10 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
             T* sin_start = nullptr;
             T* cos_start = nullptr;
             // step 0) get the rotary position embedding for the current position
-            auto start_idx = 0;
-            p = pos_ptr[start_idx + s];
-            sin_start = emb_pos_sin_ptr + p * HR;
-            cos_start = emb_pos_cos_ptr + p * HR;
+            // auto start_idx = 0;
+            // p = pos_ptr[s];
+            sin_start = emb_pos_sin_ptr + s * HR;
+            cos_start = emb_pos_cos_ptr + s * HR;
             // step 1) apply_rotary_pos_emb for the rotary_dim elements in every
             // head of query/key
             for (auto h = 0; h < rotary_dim; h += 2) {
@@ -66,6 +64,8 @@ std::tuple<at::Tensor, at::Tensor> rope_kernel_impl(
                 auto sin2 = sin_start[h + 1];
                 auto in1 = in_ptr[in_offset_q + h];
                 auto in2 = in_ptr[in_offset_q + h + 1];
+                // std::cout<<"sin cos "<<sin1<<" "<<cos1<<" "<<sin2<<" "<<cos2<<"\n";
+                // std::cout<<"in "<<in1 <<" "<<in2<<"\n";
                 auto out1 = in1 * cos1 - in2 * sin1;
                 auto out2 = in2 * cos2 + in1 * sin2;
                 auto out1_offset = out_offset_q + h;
@@ -103,19 +103,19 @@ rotary_position_embedding_cpu(
     at::Tensor& q_pe,
     at::Tensor& k_pe,
     at::Tensor& t_emb_pos_sin,
-    at::Tensor& t_emb_pos_cos,
-    at::Tensor& t_pos) {
+    at::Tensor& t_emb_pos_cos) {
+  RECORD_FUNCTION(
+    "sgl-kernel::rotary_position_embedding_cpu", std::vector<c10::IValue>({q_pe, k_pe, t_emb_pos_sin, t_emb_pos_cos}));
   q_pe = q_pe.contiguous();
   k_pe = k_pe.contiguous();
   t_emb_pos_sin = t_emb_pos_sin.contiguous();
   t_emb_pos_cos = t_emb_pos_cos.contiguous();
-  t_pos = t_pos.contiguous();
   if (q_pe.scalar_type() == at::kFloat) {
     return rope_kernel_impl<float>(
-        q_pe, k_pe, t_emb_pos_sin, t_emb_pos_cos, t_pos);
+        q_pe, k_pe, t_emb_pos_sin, t_emb_pos_cos);
   } else if (q_pe.scalar_type() == at::kBFloat16) {
     return rope_kernel_impl<at::BFloat16>(
-        q_pe, k_pe, t_emb_pos_sin, t_emb_pos_cos, t_pos);
+        q_pe, k_pe, t_emb_pos_sin, t_emb_pos_cos);
   } else {
     TORCH_CHECK(
         false,

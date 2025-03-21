@@ -205,12 +205,10 @@ def rotary_position_embedding(
     k_pe,
     t_emb_pos_sin,
     t_emb_pos_cos,
-    t_pos,
 ):
     return sgl_kernel.common_ops.rotary_position_embedding_cpu(
         q_pe,
         k_pe,
         t_emb_pos_sin,
         t_emb_pos_cos,
-        t_pos,
     )

@@ -54,7 +54,7 @@ class TestFusedMOE(expecttest.TestCase):
 
                 # fused rope kernel
                 q_pe_clone, k_pe_clone = sgl_kernel.cpu.rotary_position_embedding(
-                    q_pe_clone, k_pe_clone, sin, cos, positions
+                    q_pe_clone, k_pe_clone, sin, cos
                 )
 
                 assert torch.allclose(q_pe, q_pe_clone, rtol=prec, atol=prec)

@@ -87,8 +87,7 @@ rotary_position_embedding_cpu(
     at::Tensor& q_pe,
     at::Tensor& k_pe,
     at::Tensor& t_emb_pos_sin,
-    at::Tensor& t_emb_pos_cos,
-    at::Tensor& t_pos);
+    at::Tensor& t_emb_pos_cos);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   // activation

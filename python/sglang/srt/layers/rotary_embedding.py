@@ -15,6 +15,9 @@ _is_cuda_available = is_cuda_available()
 if _is_cuda_available:
     from sgl_kernel import apply_rope_with_cos_sin_cache_inplace
 
+from sglang.srt.cpu_utils import cpu_has_amx_support
+if cpu_has_amx_support():
+    import sgl_kernel.cpu
 
 def _rotate_neox(x: torch.Tensor) -> torch.Tensor:
     x1 = x[..., : x.shape[-1] // 2]
@@ -719,12 +722,6 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         offsets: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """PyTorch-native implementation equivalent to forward()."""
-        query_rot = query[..., : self.rotary_dim]
-        key_rot = key[..., : self.rotary_dim]
-        if self.rotary_dim < self.head_size:
-            query_pass = query[..., self.rotary_dim :]
-            key_pass = key[..., self.rotary_dim :]
-
         self.cos_sin_cache: torch.Tensor = self.cos_sin_cache.to(positions.device)
         cos_sin = self.cos_sin_cache[
             torch.add(positions, offsets) if offsets is not None else positions
@@ -739,17 +736,28 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
             cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
             sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
 
-        rotate_fn = _rotate_neox if self.is_neox_style else _rotate_gptj
-        query_rot = query_rot * cos + rotate_fn(query_rot) * sin
-        key_rot = key_rot * cos + rotate_fn(key_rot) * sin
-
-        if self.rotary_dim < self.head_size:
-            query = torch.cat((query_rot, query_pass), dim=-1)
-            key = torch.cat((key_rot, key_pass), dim=-1)
+        if positions.device == torch.device("cpu") and cpu_has_amx_support():
+            return sgl_kernel.cpu.rotary_position_embedding(query, key, sin, cos)
         else:
-            query = query_rot
-            key = key_rot
-        return query, key
+            query_rot = query[..., : self.rotary_dim]
+            key_rot = key[..., : self.rotary_dim]
+            print("ref ", query.shape, key.shape, self.rotary_dim)
+            if self.rotary_dim < self.head_size:
+                print("extend")
+                query_pass = query[..., self.rotary_dim :]
+                key_pass = key[..., self.rotary_dim :]
+
+            rotate_fn = _rotate_neox if self.is_neox_style else _rotate_gptj
+            query_rot = query_rot * cos + rotate_fn(query_rot) * sin
+            key_rot = key_rot * cos + rotate_fn(key_rot) * sin
+
+            if self.rotary_dim < self.head_size:
+                query = torch.cat((query_rot, query_pass), dim=-1)
+                key = torch.cat((key_rot, key_pass), dim=-1)
+            else:
+                query = query_rot
+                key = key_rot
+            return query, key
 
 
 class Llama3RotaryEmbedding(RotaryEmbedding):
