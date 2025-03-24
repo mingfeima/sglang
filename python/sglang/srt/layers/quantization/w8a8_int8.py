@@ -225,9 +225,7 @@ class W8A8Int8MoEMethod:
         layer.register_parameter("w2_input_scale", w2_input_scale)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if layer.w13_weight.device == torch.device(
-            "cpu"
-        ) and layer.w2_weight.device == torch.device("cpu"):
+        if all(w.device.type == "cpu" for w in [layer.w13_weight, layer.w2_weight]):
             assert (
                 cpu_has_amx_support()
             ), "W8A8Int8MoEMethod on CPU requires that CPU has AMX support"
