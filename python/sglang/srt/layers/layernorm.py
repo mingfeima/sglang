@@ -84,12 +84,15 @@ class RMSNorm(CustomOp):
         x: torch.Tensor,
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        if residual is not None:
-            sgl_kernel.cpu.fused_add_rmsnorm(x, residual, self.weight.data, self.variance_epsilon)
-            return x, residual
-        out = torch.empty_like(x)
-        sgl_kernel.cpu.rmsnorm(out, x, self.weight.data, self.variance_epsilon)
-        return out
+        if cpu_has_amx_support():
+            if residual is not None:
+                sgl_kernel.cpu.fused_add_rmsnorm(x, residual, self.weight.data, self.variance_epsilon)
+                return x, residual
+            out = torch.empty_like(x)
+            sgl_kernel.cpu.rmsnorm(out, x, self.weight.data, self.variance_epsilon)
+            return out
+        else:
+            return self.forward_native(x, residual)
 
 
 class GemmaRMSNorm(CustomOp):
