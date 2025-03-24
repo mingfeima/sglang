@@ -723,27 +723,29 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """PyTorch-native implementation equivalent to forward()."""
         self.cos_sin_cache: torch.Tensor = self.cos_sin_cache.to(positions.device)
-        cos_sin = self.cos_sin_cache[
-            torch.add(positions, offsets) if offsets is not None else positions
-        ]
-        cos, sin = cos_sin.chunk(2, dim=-1)
-        if self.is_neox_style:
-            # NOTE(woosuk): Here we assume that the positions tensor has the
-            # shape [batch_size, seq_len].
-            cos = cos.repeat(1, 1, 2).unsqueeze(-2)
-            sin = sin.repeat(1, 1, 2).unsqueeze(-2)
-        else:
-            cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
-            sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
+        positions = torch.add(positions, offsets) if offsets is not None else positions
 
+        # TODO: Add scenario of self.rotary_dim < self.head_size
         if positions.device == torch.device("cpu") and cpu_has_amx_support():
-            return sgl_kernel.cpu.rotary_position_embedding(query, key, sin, cos)
+            return sgl_kernel.cpu.rotary_position_embedding(
+                positions, query, key, self.cos_sin_cache)
         else:
             query_rot = query[..., : self.rotary_dim]
             key_rot = key[..., : self.rotary_dim]
             if self.rotary_dim < self.head_size:
                 query_pass = query[..., self.rotary_dim :]
                 key_pass = key[..., self.rotary_dim :]
+
+            cos_sin = self.cos_sin_cache[positions]
+            cos, sin = cos_sin.chunk(2, dim=-1)
+            if self.is_neox_style:
+                # NOTE(woosuk): Here we assume that the positions tensor has the
+                # shape [batch_size, seq_len].
+                cos = cos.repeat(1, 1, 2).unsqueeze(-2)
+                sin = sin.repeat(1, 1, 2).unsqueeze(-2)
+            else:
+                cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
+                sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
 
             rotate_fn = _rotate_neox if self.is_neox_style else _rotate_gptj
             query_rot = query_rot * cos + rotate_fn(query_rot) * sin
