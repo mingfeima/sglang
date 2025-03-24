@@ -79,6 +79,9 @@ class W8A8Int8LinearMethod(LinearMethodBase):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if layer.weight.device == torch.device("cpu"):
+            assert (
+                cpu_has_amx_support()
+            ), "W8A8Int8LinearMethod on CPU requires that CPU has AMX support"
             _process_weight_after_loading(layer, ["weight"])
             return
 
@@ -225,6 +228,9 @@ class W8A8Int8MoEMethod:
         if layer.w13_weight.device == torch.device(
             "cpu"
         ) and layer.w2_weight.device == torch.device("cpu"):
+            assert (
+                cpu_has_amx_support()
+            ), "W8A8Int8MoEMethod on CPU requires that CPU has AMX support"
             _process_weight_after_loading(layer, ["w13_weight", "w2_weight"])
             return
 
