@@ -361,6 +361,8 @@ void biased_grouped_topk_cpu(
     bool renormalize,
     int64_t num_expert_group,
     int64_t topk_group) {
+  RECORD_FUNCTION(
+    "sgl-kernel::biased_grouped_topk_cpu", std::vector<c10::IValue>({topk_weights, topk_ids, hidden_states, gating_output, correction_bias}));
 
   CHECK_INPUT(gating_output);
   CHECK_INPUT(correction_bias);
