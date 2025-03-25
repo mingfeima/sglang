@@ -86,9 +86,8 @@ def _process_weight_after_loading(module, weight_names, transpose_dims=None) -> 
 
     for i, weight_name in enumerate(weight_names):
         weight_tensor = getattr(module, weight_name)
-        if transpose_dims:
-            transpose_dim = transpose_dims[i]
-            weight_tensor = weight_tensor.transpose(*transpose_dim)
+        if transpose_dims and transpose_dims[i]:
+            weight_tensor = weight_tensor.transpose(*transpose_dims[i])
 
         setattr(
             module,
