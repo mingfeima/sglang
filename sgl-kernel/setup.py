@@ -147,6 +147,7 @@ nvcc_flags_fp8 = [
 
 sources = [
     "csrc/cpu/activation.cpp",
+    "csrc/cpu/bmm.cpp",
     "csrc/cpu/decode.cpp",
     "csrc/cpu/extend.cpp",
     "csrc/cpu/gemm.cpp",
