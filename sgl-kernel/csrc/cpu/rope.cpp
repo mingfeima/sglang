@@ -19,13 +19,15 @@ void rope_kernel_impl(
     int out_stride_qs,
     int out_stride_ks,
     int HK,
-    int k_pe_stride_s) {
+    int k_pe_stride_s,
+    int q_pe_stride_n,
+    int out_stride_qn) {
   int COFF = HR / 2;
   at::parallel_for(0, seq_len, 1024 / rotary_dim, [&](int begin, int end) {
     for (int s = begin; s < end; ++s) {
       for (int n = 0; n < num_head; n++) {
-        int in_offset_q = s * in_stride_s + n * rotary_dim;
-        int out_offset_q = s * out_stride_qs + n * rotary_dim;
+        int in_offset_q = s * in_stride_s + n * q_pe_stride_n;
+        int out_offset_q = s * out_stride_qs + n * out_stride_qn;
         int out_offset_k = s * out_stride_ks;
         long p = 0;
         scalar_t* sin_start = nullptr;
@@ -49,7 +51,7 @@ void rope_kernel_impl(
         for (int h = 0; h < HK; h += 2) {
           scalar_t cos = cos_start[h >> 1];
           scalar_t sin = sin_start[h >> 1];
-          int k_pe_offset = s * k_pe_stride_s;
+          int k_pe_offset = s * k_pe_stride_s; // + (k_pe_stride_s - rotary_dim);
           scalar_t in1_k = k_pe[k_pe_offset + h];
           scalar_t in2_k = k_pe[k_pe_offset + h + 1];
           scalar_t out1_k = in1_k * cos - in2_k * sin;
@@ -90,8 +92,10 @@ rotary_position_embedding_cpu(at::Tensor& t_pos, at::Tensor& q_pe, at::Tensor& k
   at::Tensor q_pe_out = at::empty_like(q_pe);
   at::Tensor k_pe_out = at::empty_like(k_pe);
   int q_pe_stride_s = q_pe.stride(0);
+  int q_pe_stride_n = q_pe.stride(1);
   int k_pe_stride_s = k_pe.stride(0);
   int out_stride_qs = q_pe_out.stride(0);
+  int out_stride_qn = q_pe_out.stride(1);
   int out_stride_ks = k_pe_out.stride(0);
 
   const auto input_dtype = q_pe.scalar_type();
@@ -115,7 +119,9 @@ rotary_position_embedding_cpu(at::Tensor& t_pos, at::Tensor& q_pe, at::Tensor& k
         out_stride_qs,
         out_stride_ks,
         HK,
-        k_pe_stride_s);
+        k_pe_stride_s,
+        q_pe_stride_n,
+        out_stride_qn);
   });
   return std::make_tuple(q_pe_out, k_pe_out);
 }

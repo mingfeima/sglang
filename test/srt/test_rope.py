@@ -72,11 +72,13 @@ class TestROPE(expecttest.TestCase):
 
             with torch.no_grad(), torch.cpu.amp.autocast(enabled=enable_autocast):
                 q = torch.randn(seq_len, num_head, q_head_dim, dtype=dtype)
+                q_clone = q.clone()
                 k = torch.randn(seq_len, 1, k_dim, dtype=dtype)
+                k_clone = k.clone()
                 _, q_pe = q.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
+                _, q_pe_clone = q_clone.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
                 k_pe = k[:, :, k_dim - qk_rope_head_dim :]
-                q_pe_clone = q_pe.clone()
-                k_pe_clone = k_pe.clone()
+                k_pe_clone = k_clone[:, :, k_dim - qk_rope_head_dim :]
 
                 # ref kernel
                 q_pe, k_pe = forward_ref(positions, q_pe, k_pe, cos_sin_cache)
