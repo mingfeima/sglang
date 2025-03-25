@@ -58,6 +58,7 @@ class TestROPE(expecttest.TestCase):
         qk_nope_head_dim = 128
         qk_rope_head_dim = 64
         max_pos = 256
+        k_dim = 576
 
         # Create cos_sin_cache
         freqs = torch.rand(max_pos, qk_rope_head_dim // 2)
@@ -71,8 +72,9 @@ class TestROPE(expecttest.TestCase):
 
             with torch.no_grad(), torch.cpu.amp.autocast(enabled=enable_autocast):
                 q = torch.randn(seq_len, num_head, q_head_dim, dtype=dtype)
-                k_pe = torch.randn(seq_len, 1, qk_rope_head_dim, dtype=dtype)
+                k = torch.randn(seq_len, 1, k_dim, dtype=dtype)
                 _, q_pe = q.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
+                k_pe = k[:, :, k_dim - qk_rope_head_dim :]
                 q_pe_clone = q_pe.clone()
                 k_pe_clone = k_pe.clone()
 

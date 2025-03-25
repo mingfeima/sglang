@@ -67,35 +67,39 @@ std::tuple<at::Tensor, at::Tensor>
 rotary_position_embedding_cpu(at::Tensor& t_pos, at::Tensor& q_pe, at::Tensor& k_pe, at::Tensor& t_emb_pos) {
   RECORD_FUNCTION(
       "sgl-kernel::rotary_position_embedding_cpu", std::vector<c10::IValue>({t_pos, q_pe, k_pe, t_emb_pos}));
-  t_pos = t_pos.contiguous();
-  q_pe = q_pe.contiguous();
-  k_pe = k_pe.contiguous();
-  t_emb_pos = t_emb_pos.contiguous();
-  CHECK_INPUT(t_pos);
-  CHECK_INPUT(q_pe);
-  CHECK_INPUT(k_pe);
-  CHECK_INPUT(t_emb_pos);
+  CHECK_INPUT (t_pos);
+  CHECK_LAST_DIM_CONTIGUOUS_INPUT (q_pe);
+  CHECK_LAST_DIM_CONTIGUOUS_INPUT (k_pe);
+  CHECK_INPUT (t_emb_pos);
+  CHECK_DIM(1, t_pos);
+  CHECK_DIM(3, q_pe);
+  CHECK_DIM(3, k_pe);
+  CHECK_DIM(2, t_emb_pos);
+
+  int seq_len = q_pe.size(0);
+  int num_head = q_pe.size(1);
+  int rotary_dim = q_pe.size(2);
+  int HK = k_pe.size(2);
+  int HR = t_emb_pos.size(1);
+  CHECK_EQ(HR, rotary_dim);
+  CHECK_EQ(k_pe.size(0), seq_len);
+  CHECK_EQ(k_pe.size(1), 1);
+  CHECK_EQ(t_pos.size(0), seq_len);
+  CHECK_EQ(HK, rotary_dim);
+
   at::Tensor q_pe_out = at::empty_like(q_pe);
   at::Tensor k_pe_out = at::empty_like(k_pe);
+  int q_pe_stride_s = q_pe.stride(0);
+  int k_pe_stride_s = k_pe.stride(0);
+  int out_stride_qs = q_pe_out.stride(0);
+  int out_stride_ks = k_pe_out.stride(0);
 
-  auto in_sizes = q_pe.sizes();   // in[S][N][rotary_dim]
-  auto S = in_sizes[0];           // seq len
-  auto N = in_sizes[1];           // number of head
-  auto rotary_dim = in_sizes[2];  // qk_rope_head_dim
-  auto MP = t_emb_pos.size(0);    // Max Pos
-  auto HR = t_emb_pos.size(1);    // rotary_dim
-  auto in_stride_s = q_pe.stride(0);
-  auto NK = 1;
-  auto HK = k_pe.size(-1);
-  CHECK_EQ(S, t_pos.size(0));
-  CHECK_EQ(HR, rotary_dim);
-  CHECK_EQ(rotary_dim, in_sizes[2]);
-  CHECK_EQ(HK, rotary_dim);
-  auto k_pe_stride_s = k_pe.stride(0);
-  auto out_stride_qs = q_pe_out.stride(0);
-  auto out_stride_ks = k_pe_out.stride(0);
+  const auto input_dtype = q_pe.scalar_type();
+  TORCH_CHECK(t_pos.scalar_type() == at::kLong, "expect positions to be int64, got ", t_pos.scalar_type());
+  TORCH_CHECK(input_dtype == k_pe.scalar_type(), "q_pe and k_pe must have the same data type");
+  TORCH_CHECK(input_dtype == t_emb_pos.scalar_type(), "q_pe and t_emb_pos must have the same data type");
 
-  AT_DISPATCH_REDUCED_FLOATING_TYPES(q_pe.scalar_type(), "rotary_position_embedding_cpu", [&] {
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(input_dtype, "rotary_position_embedding_cpu", [&] {
     rope_kernel_impl<scalar_t>(
         q_pe_out.data_ptr<scalar_t>(),
         k_pe_out.data_ptr<scalar_t>(),
@@ -103,11 +107,11 @@ rotary_position_embedding_cpu(at::Tensor& t_pos, at::Tensor& q_pe, at::Tensor& k
         q_pe.data_ptr<scalar_t>(),
         k_pe.data_ptr<scalar_t>(),
         t_emb_pos.data_ptr<scalar_t>(),
-        S,
-        N,
+        seq_len,
+        num_head,
         rotary_dim,
         HR,
-        in_stride_s,
+        q_pe_stride_s,
         out_stride_qs,
         out_stride_ks,
         HK,
