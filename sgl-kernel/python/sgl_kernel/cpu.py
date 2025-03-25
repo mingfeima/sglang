@@ -132,6 +132,30 @@ def grouped_topk(
     )
 
 
+def biased_grouped_topk(
+    topk_weights,
+    topk_ids,
+    hidden_states,
+    router_logits,
+    bias,
+    top_k,
+    renormalize,
+    num_expert_group,
+    topk_group,
+):
+    sgl_kernel.common_ops.biased_grouped_topk_cpu(
+        topk_weights,
+        topk_ids,
+        hidden_states,
+        router_logits,
+        bias,
+        top_k,
+        renormalize,
+        num_expert_group,
+        topk_group,
+    )
+
+
 def fused_add_rmsnorm(
     input,
     residual,
