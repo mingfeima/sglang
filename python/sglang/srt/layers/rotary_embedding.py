@@ -722,7 +722,6 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         offsets: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """PyTorch-native implementation equivalent to forward()."""
-        self.cos_sin_cache: torch.Tensor = self.cos_sin_cache.to(positions.device)
         positions = torch.add(positions, offsets) if offsets is not None else positions
 
         # TODO: Add scenario of self.rotary_dim < self.head_size
@@ -730,6 +729,7 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
             return sgl_kernel.cpu.rotary_position_embedding(
                 positions, query, key, self.cos_sin_cache)
         else:
+            self.cos_sin_cache: torch.Tensor = self.cos_sin_cache.to(positions.device)
             query_rot = query[..., : self.rotary_dim]
             key_rot = key[..., : self.rotary_dim]
             if self.rotary_dim < self.head_size:
