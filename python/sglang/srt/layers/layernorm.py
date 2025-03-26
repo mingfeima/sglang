@@ -29,7 +29,7 @@ if is_cuda_available():
         rmsnorm,
     )
 
-from sglang.srt.cpu_utils import cpu_has_amx_support
+from sglang.srt.cpu_utils import cpu_has_amx_support, is_cpu_amx
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
@@ -136,7 +136,7 @@ class GemmaRMSNorm(CustomOp):
         return out
 
 
-if not (is_cuda_available() or (not is_cuda_available() and cpu_has_amx_support())):
+if not (is_cuda_available() or is_cpu_amx()):
     logger.info(
         "sgl-kernel is not available on Non-NV platforms or Non-AMX CPUs. Fallback to other kernel libraries."
     )
