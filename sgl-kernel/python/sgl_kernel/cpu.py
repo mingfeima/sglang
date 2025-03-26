@@ -201,6 +201,7 @@ def int8_scaled_mm(
 def per_token_quant_int8(x):
     return sgl_kernel.common_ops.per_token_quant_int8_cpu(x)
 
+
 def rotary_position_embedding(
     t_pos,
     q_pe,
@@ -214,6 +215,7 @@ def rotary_position_embedding(
         t_emb_pos,
     )
 
+
 def silu_and_mul(
     out,
     input,
@@ -222,3 +224,7 @@ def silu_and_mul(
         out,
         input,
     )
+
+
+def bmm(out, mat1, mat2, is_vnni=True, scale=None):
+    return sgl_kernel.common_ops.bmm_cpu(out, mat1, mat2, is_vnni, scale)
