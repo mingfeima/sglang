@@ -692,12 +692,11 @@ class DeepseekV2AttentionMLA(nn.Module):
                 N = self.w_kc.size(1)
                 M = q_nope.size(0)
 
-                q_nope_out = torch.empty([B, M, N], dtype=q_nope.dtype)
+                q_nope_out = q_input[..., : self.kv_lora_rank].transpose_(0, 1)
                 sgl_kernel.cpu.bmm(q_nope_out, q_nope.transpose(0, 1), self.w_kc)
             else:
                 q_nope_out = torch.bmm(q_nope.transpose(0, 1), self.w_kc)
-
-        q_input[..., : self.kv_lora_rank] = q_nope_out.transpose(0, 1)
+                q_input[..., : self.kv_lora_rank] = q_nope_out.transpose(0, 1)
 
         latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0]
         v_input = latent_cache[..., : self.kv_lora_rank]
@@ -736,14 +735,15 @@ class DeepseekV2AttentionMLA(nn.Module):
                 B = self.w_vc.size(0)
                 N = self.w_vc.size(1)
                 M = attn_output.size(0)
-                attn_bmm_output = torch.empty([B, M, N], dtype=attn_output.dtype)
+                output = torch.empty([M, int(B * N)], dtype=attn_output.dtype)
+                attn_bmm_output = output.view([M, B, N]).transpose_(0, 1)
                 sgl_kernel.cpu.bmm(
                     attn_bmm_output, attn_output.transpose(0, 1), self.w_vc
                 )
+                attn_output = output
             else:
                 attn_bmm_output = torch.bmm(attn_output.transpose(0, 1), self.w_vc)
-
-        attn_output = attn_bmm_output.transpose(0, 1).flatten(1, 2)
+                attn_output = attn_bmm_output.transpose(0, 1).flatten(1, 2)
         output, _ = self.o_proj(attn_output)
 
         return output
