@@ -187,6 +187,7 @@ class DeepseekV2MoE(nn.Module):
             prefix=add_prefix("experts", prefix),
         )
 
+        self.shared_experts_is_int8 = None
         if config.n_shared_experts is not None:
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
             self.shared_experts = DeepseekV2MLP(
@@ -197,11 +198,14 @@ class DeepseekV2MoE(nn.Module):
                 reduce_results=False,
                 prefix=add_prefix("shared_experts", prefix),
             )
+            if self.shared_experts.gate_up_proj.weight.dtype == torch.int8:
+                assert self.shared_experts.down_proj.weight.dtype == torch.int8
+                self.shared_experts_is_int8 = True
+            
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-
         # router_logits: (num_tokens, n_experts)
         router_logits = self.gate(hidden_states)
         fused_experts_out = self.experts(
@@ -219,7 +223,6 @@ class DeepseekV2MoE(nn.Module):
             # [Note] inplace should be False in fused_experts.
             # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
             # While hidden_states is still needed in shared_expert.
-            # TODO: where to add int8?
             final_hidden_states = sgl_kernel.cpu.shared_expert(
                 hidden_states,
                 self.shared_experts.gate_up_proj.weight,
@@ -227,6 +230,9 @@ class DeepseekV2MoE(nn.Module):
                 fused_experts_out,
                 self.routed_scaling_factor,
                 inplace=True,
+                use_int8_w8a8=self.shared_experts_is_int8,
+                w1_scale = self.shared_experts.gate_up_proj.weight_scale if self.shared_experts_is_int8 else None,
+                w2_scale = self.shared_experts.down_proj.weight_scale if self.shared_experts_is_int8 else None,
             )
         else:
             if self.n_shared_experts is not None:
