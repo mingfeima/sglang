@@ -56,11 +56,7 @@ class SiluAndMul(CustomOp):
 
     def forward_cpu(self, x: torch.Tensor) -> torch.Tensor:
         if cpu_has_amx_support():
-            d = x.shape[-1] // 2
-            output_shape = x.shape[:-1] + (d,)
-            out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
-            sgl_kernel.cpu.silu_and_mul(out, x)
-            return out
+            return sgl_kernel.cpu.silu_and_mul(x)
         else:
             return self.forward_native(x)
 

@@ -111,8 +111,6 @@ def weight_packed_linear(
 
 
 def grouped_topk(
-    topk_weights,
-    topk_ids,
     hidden_states,
     router_logits,
     top_k,
@@ -120,9 +118,7 @@ def grouped_topk(
     num_expert_group,
     topk_group,
 ):
-    sgl_kernel.common_ops.grouped_topk_cpu(
-        topk_weights,
-        topk_ids,
+    return sgl_kernel.common_ops.grouped_topk_cpu(
         hidden_states,
         router_logits,
         top_k,
@@ -133,8 +129,6 @@ def grouped_topk(
 
 
 def biased_grouped_topk(
-    topk_weights,
-    topk_ids,
     hidden_states,
     router_logits,
     bias,
@@ -143,9 +137,7 @@ def biased_grouped_topk(
     num_expert_group,
     topk_group,
 ):
-    sgl_kernel.common_ops.biased_grouped_topk_cpu(
-        topk_weights,
-        topk_ids,
+    return sgl_kernel.common_ops.biased_grouped_topk_cpu(
         hidden_states,
         router_logits,
         bias,
@@ -171,13 +163,11 @@ def fused_add_rmsnorm(
 
 
 def rmsnorm(
-    output,
     input,
     weight,
     eps,
 ):
     return sgl_kernel.common_ops.rmsnorm_cpu(
-        output,
         input,
         weight,
         eps,
@@ -217,13 +207,9 @@ def rotary_position_embedding(
 
 
 def silu_and_mul(
-    out,
     input,
 ):
-    return sgl_kernel.common_ops.silu_and_mul_cpu(
-        out,
-        input,
-    )
+    return sgl_kernel.common_ops.silu_and_mul_cpu(input)
 
 
 def bmm(out, mat1, mat2, is_vnni=True, scale=None):
