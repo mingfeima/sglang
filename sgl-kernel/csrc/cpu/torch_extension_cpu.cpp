@@ -29,22 +29,11 @@ at::Tensor rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps);
 void fused_add_rmsnorm_cpu(at::Tensor& input, at::Tensor& residual, at::Tensor& weight, double eps);
 
 // topk
-std::tuple<at::Tensor, at::Tensor> grouped_topk_cpu(
-    at::Tensor& hidden_states,
-    at::Tensor& gating_output,
-    int64_t topk,
-    bool renormalize,
-    int64_t num_expert_group,
-    int64_t topk_group);
+std::tuple<at::Tensor, at::Tensor> grouped_topk_cpu(at::Tensor& hidden_states, at::Tensor& gating_output,
+    int64_t topk, bool renormalize, int64_t num_expert_group, int64_t topk_group);
 
-std::tuple<at::Tensor, at::Tensor> biased_grouped_topk_cpu(
-    at::Tensor& hidden_states,
-    at::Tensor& gating_output,
-    at::Tensor& correction_bias,
-    int64_t topk,
-    bool renormalize,
-    int64_t num_expert_group,
-    int64_t topk_group);
+std::tuple<at::Tensor, at::Tensor> biased_grouped_topk_cpu(at::Tensor& hidden_states, at::Tensor& gating_output,
+    at::Tensor& correction_bias, int64_t topk, bool renormalize, int64_t num_expert_group, int64_t topk_group);
 
 // attention
 void decode_attention_cpu(at::Tensor& query, at::Tensor& output,
