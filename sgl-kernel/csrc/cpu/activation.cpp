@@ -56,11 +56,14 @@ void act_and_mul_kernel_impl(
 
 // input   : {num_tokens, 2 * d}
 // output  : {num_tokens, d}
-void silu_and_mul_cpu(at::Tensor& out, at::Tensor& input) {
-  RECORD_FUNCTION(
-    "sgl-kernel::silu_and_mul_cpu", std::vector<c10::IValue>({out, input}));
-  int d = input.size(-1) / 2;
+at::Tensor silu_and_mul_cpu(at::Tensor& input) {
+  RECORD_FUNCTION("sgl-kernel::silu_and_mul_cpu", std::vector<c10::IValue>({input}));
+  auto sizes = input.sizes().vec();
+  int last_dim = input.ndimension() - 1;
+  int d = sizes[last_dim] / 2;
+  sizes[last_dim] = d;
   int num_tokens = input.numel() / input.size(-1);
+  at::Tensor out = at::empty(sizes, input.options());
 
   AT_DISPATCH_REDUCED_FLOATING_TYPES(input.scalar_type(), "silu_and_mul", [&] {
     using Vec = at::vec::Vectorized<float>;
@@ -72,4 +75,5 @@ void silu_and_mul_cpu(at::Tensor& out, at::Tensor& input) {
         [](float x) { return x / (1.f + std::exp(-x)); },
         [](Vec x) { return x / (Vec(1.f) + x.neg().exp()); });
   });
+  return out;
 }
