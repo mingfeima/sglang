@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from sglang.srt.utils import get_compiler_backend
-from sglang.srt.cpu_utils import cpu_has_amx_support
+from sglang.srt.cpu_utils import cpu_has_amx_support, is_cpu_amx
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
@@ -181,7 +181,7 @@ def select_experts(
         assert num_expert_group is not None
         if correction_bias is None:
             device = hidden_states.device
-            if device == torch.device("cpu") and cpu_has_amx_support():
+            if is_cpu_amx():
                 M = hidden_states.size(0)
                 topk_weights = torch.empty(
                     M, top_k, dtype=torch.float32, device=device
@@ -208,7 +208,7 @@ def select_experts(
                 )
         else:
             device = hidden_states.device
-            if device == torch.device("cpu") and cpu_has_amx_support():
+            if is_cpu_amx():
                 M = hidden_states.size(0)
                 topk_weights = torch.empty(
                     M, top_k, dtype=torch.float32, device=device

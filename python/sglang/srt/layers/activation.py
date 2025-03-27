@@ -26,7 +26,7 @@ from sglang.srt.utils import is_cuda_available
 if is_cuda_available():
     from sgl_kernel import gelu_and_mul, gelu_tanh_and_mul, silu_and_mul
 
-from sglang.srt.cpu_utils import cpu_has_amx_support
+from sglang.srt.cpu_utils import cpu_has_amx_support, is_cpu_amx
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
@@ -178,7 +178,7 @@ def get_act_fn(
     return act_fn
 
 
-if not (is_cuda_available() or (not is_cuda_available() and cpu_has_amx_support())):
+if not (is_cuda_available() or is_cpu_amx()):
     logger.info(
         "sgl-kernel is not available on Non-NV platforms or Non-AMX CPUs. Fallback to other kernel libraries."
     )

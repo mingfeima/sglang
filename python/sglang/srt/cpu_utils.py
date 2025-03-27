@@ -103,6 +103,14 @@ def _process_weight_after_loading(module, weight_names, transpose_dims=None) -> 
     )
 
 
+def is_cpu():
+    from sglang.srt.managers.schedule_batch import global_server_args_dict
+    return global_server_args_dict["device"] == "cpu"
+
+
+def is_cpu_amx():
+    return is_cpu() and cpu_has_amx_support()
+
 class PackWeightMethod:
     def __init__(self, weight_names, transpose_dims=None):
         self.weight_names = weight_names
