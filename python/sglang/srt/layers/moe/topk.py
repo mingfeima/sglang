@@ -182,14 +182,7 @@ def select_experts(
         if correction_bias is None:
             device = hidden_states.device
             if device == torch.device("cpu") and cpu_has_amx_support():
-                M = hidden_states.size(0)
-                topk_weights = torch.empty(
-                    M, top_k, dtype=torch.float32, device=device
-                )
-                topk_ids = torch.empty(M, top_k, dtype=torch.int32, device=device)
-                sgl_kernel.cpu.grouped_topk(
-                    topk_weights,
-                    topk_ids,
+                topk_weights, topk_ids = sgl_kernel.cpu.grouped_topk(
                     hidden_states,
                     router_logits,
                     top_k,
@@ -209,14 +202,7 @@ def select_experts(
         else:
             device = hidden_states.device
             if device == torch.device("cpu") and cpu_has_amx_support():
-                M = hidden_states.size(0)
-                topk_weights = torch.empty(
-                    M, top_k, dtype=torch.float32, device=device
-                )
-                topk_ids = torch.empty(M, top_k, dtype=torch.int32, device=device)
-                sgl_kernel.cpu.biased_grouped_topk(
-                    topk_weights,
-                    topk_ids,
+                topk_weights, topk_ids = sgl_kernel.cpu.biased_grouped_topk(
                     hidden_states,
                     router_logits,
                     correction_bias,

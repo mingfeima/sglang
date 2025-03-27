@@ -88,9 +88,7 @@ class RMSNorm(CustomOp):
             if residual is not None:
                 sgl_kernel.cpu.fused_add_rmsnorm(x, residual, self.weight.data, self.variance_epsilon)
                 return x, residual
-            out = torch.empty_like(x)
-            sgl_kernel.cpu.rmsnorm(out, x, self.weight.data, self.variance_epsilon)
-            return out
+            return sgl_kernel.cpu.rmsnorm(x, self.weight.data, self.variance_epsilon)
         else:
             return self.forward_native(x, residual)
 
