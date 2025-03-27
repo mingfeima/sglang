@@ -201,16 +201,39 @@ class DeepseekV2MoE(nn.Module):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-        if self.n_shared_experts is not None:
-            shared_output = self.shared_experts(hidden_states)
+
         # router_logits: (num_tokens, n_experts)
         router_logits = self.gate(hidden_states)
-        final_hidden_states = (
-            self.experts(hidden_states=hidden_states, router_logits=router_logits)
-            * self.routed_scaling_factor
+        fused_experts_out = self.experts(
+            hidden_states=hidden_states, router_logits=router_logits
         )
-        if shared_output is not None:
-            final_hidden_states = final_hidden_states + shared_output
+
+        assert (
+            self.shared_experts.gate_up_proj.use_intel_amx_backend
+            == self.shared_experts.down_proj.use_intel_amx_backend
+        )
+        if (
+            self.n_shared_experts is not None
+            and self.shared_experts.gate_up_proj.use_intel_amx_backend
+        ):
+            # [Note] inplace should be False in fused_experts.
+            # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
+            # While hidden_states is still needed in shared_expert.
+            # TODO: where to add int8?
+            final_hidden_states = sgl_kernel.cpu.shared_expert(
+                hidden_states,
+                self.shared_experts.gate_up_proj.weight,
+                self.shared_experts.down_proj.weight,
+                fused_experts_out,
+                self.routed_scaling_factor,
+                inplace=True,
+            )
+        else:
+            if self.n_shared_experts is not None:
+                shared_output = self.shared_experts(hidden_states)
+            final_hidden_states = fused_experts_out * self.routed_scaling_factor
+            if shared_output is not None:
+                final_hidden_states = final_hidden_states + shared_output
         if self.tp_size > 1:
             final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
 

@@ -32,6 +32,36 @@ def fused_experts(
     )
 
 
+def shared_expert(
+    hidden_states,
+    w1,
+    w2,
+    fused_experts_out,
+    routed_scaling_factor,
+    inplace,
+    use_int8_w8a8=False,
+    w1_scale=None,
+    w2_scale=None,
+    a1_scale=None,
+    a2_scale=None,
+    is_vnni=True,
+):
+    return sgl_kernel.common_ops.shared_expert_cpu(
+        hidden_states,
+        w1,
+        w2,
+        fused_experts_out,
+        routed_scaling_factor,
+        inplace,
+        use_int8_w8a8,
+        w1_scale,
+        w2_scale,
+        a1_scale,
+        a2_scale,
+        is_vnni,
+    )
+
+
 def convert_weight_packed(weight):
     return sgl_kernel.common_ops.convert_weight_packed(weight)
 
