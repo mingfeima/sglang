@@ -218,6 +218,19 @@ def int8_scaled_mm(
     )
 
 
+def int8_scaled_mm_with_quant(
+    mat1,
+    mat2,
+    scales2,
+    bias,
+    out_dtype,
+    is_vnni=True,
+):
+    return sgl_kernel.common_ops.int8_scaled_mm_with_quant(
+        mat1, mat2, scales2, bias, out_dtype, is_vnni
+    )
+
+
 def per_token_quant_int8(x):
     return sgl_kernel.common_ops.per_token_quant_int8_cpu(x)
 
