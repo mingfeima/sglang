@@ -345,6 +345,7 @@ def latency_test_run_once(
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             with_stack=True,
+            record_shapes=True,
         )
         profiler.start()
 
@@ -353,6 +354,16 @@ def latency_test_run_once(
     tic = time.time()
     next_token_ids, _, batch = extend(reqs, model_runner)
     synchronize(device)
+
+    if profile:
+        profiler.stop()
+        profile_filename = f"{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}_prefill.trace.json.gz"
+        parent_dir = os.path.dirname(os.path.abspath(profile_filename))
+        os.makedirs(parent_dir, exist_ok=True)
+        profiler.export_chrome_trace(profile_filename)
+        print(profiler.key_averages(group_by_input_shape=True).table(sort_by="self_cpu_time_total"))
+        rank_print(f"torch profiler chrome trace saved to {profile_filename}")
+
     prefill_latency = time.time() - tic
     tot_latency += prefill_latency
     throughput = input_len * batch_size / prefill_latency
@@ -367,6 +378,17 @@ def latency_test_run_once(
     for i in range(output_len - 1):
         synchronize(device)
         tic = time.time()
+        if i == output_len / 2 and profile:
+            profiler = None
+            profiler = torch.profiler.profile(
+                activities=[
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ],
+                with_stack=True,
+                record_shapes=True,
+            )
+            profiler.start()
         next_token_ids, _ = decode(next_token_ids, batch, model_runner)
         synchronize(device)
         latency = time.time() - tic
@@ -378,13 +400,14 @@ def latency_test_run_once(
                 f"Decode.  latency: {latency:6.5f} s, throughput: {throughput:9.2f} token/s"
             )
 
-    if profile:
-        profiler.stop()
-        profile_filename = f"{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}.trace.json.gz"
-        parent_dir = os.path.dirname(os.path.abspath(profile_filename))
-        os.makedirs(parent_dir, exist_ok=True)
-        profiler.export_chrome_trace(profile_filename)
-        rank_print(f"torch profiler chrome trace saved to {profile_filename}")
+        if i == output_len / 2 and profile:
+            profiler.stop()
+            profile_filename = f"{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}_decode.trace.json.gz"
+            parent_dir = os.path.dirname(os.path.abspath(profile_filename))
+            os.makedirs(parent_dir, exist_ok=True)
+            profiler.export_chrome_trace(profile_filename)
+            print(profiler.key_averages(group_by_input_shape=True).table(sort_by="self_cpu_time_total"))
+            rank_print(f"torch profiler chrome trace saved to {profile_filename}")
 
     # Record decode timing from 2nd output
     if output_len > 1:
