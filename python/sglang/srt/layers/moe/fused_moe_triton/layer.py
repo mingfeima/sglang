@@ -347,6 +347,12 @@ class FusedMoE(torch.nn.Module):
         self.use_presharded_weights = use_presharded_weights
         self.inplace = inplace
         self.no_combine = no_combine
+        self.w13_weight = None
+        self.w2_weight = None
+        self.w13_weight_scale = None
+        self.w2_weight_scale = None
+        self.w13_input_scale = None
+        self.w2_input_scale = None
 
         if quant_config is None:
             self.quant_method: Optional[QuantizeMethodBase] = (
