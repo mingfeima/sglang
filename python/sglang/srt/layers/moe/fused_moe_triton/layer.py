@@ -355,6 +355,7 @@ class FusedMoE(torch.nn.Module):
         else:
             self.quant_method = quant_config.get_quant_method(self, prefix)
         assert self.quant_method is not None
+        self.quant_method_apply = self.quant_method.apply
 
         self.quant_method.create_weights(
             layer=self,
@@ -686,10 +687,8 @@ class FusedMoE(torch.nn.Module):
             return
 
     def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
-        assert self.quant_method is not None
-
         # Matrix multiply.
-        final_hidden_states = self.quant_method.apply(
+        final_hidden_states = self.quant_method_apply(
             layer=self,
             x=hidden_states,
             router_logits=router_logits,
