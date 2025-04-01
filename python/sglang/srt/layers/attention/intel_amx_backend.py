@@ -99,6 +99,8 @@ class IntelAMXAttnBackend(AttentionBackend):
     ):
         attn_logits, _ = self.forward_metadata
 
+        if q.ndim == 2:
+            q = q.view(-1, layer.tp_q_head_num, layer.qk_head_dim)
         output = self.decode_attention_fwd(
             q,
             forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id),

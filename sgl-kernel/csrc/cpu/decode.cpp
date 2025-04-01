@@ -440,8 +440,11 @@ void decode_attention_kernel_impl(
     scalar_t* __restrict__ output,
     float* __restrict__ attn_logits,
     const scalar_t* __restrict__ query,
-    const scalar_t* __restrict__ k_buffer,
-    const scalar_t* __restrict__ v_buffer,
+    scalar_t* __restrict__ k_buffer,
+    scalar_t* __restrict__ v_buffer,
+    const scalar_t* __restrict__ key,
+    const scalar_t* __restrict__ value,
+    const int32_t* __restrict__ loc,
     const index_t* __restrict__ req_to_token,
     const int64_t* __restrict__ req_pool_indices,
     const int64_t* __restrict__ seq_lens,
@@ -459,6 +462,13 @@ void decode_attention_kernel_impl(
     int64_t max_num_reqs,
     int64_t max_context_len,
     int64_t max_total_num_tokens) {
+  int64_t loc_val = loc[0];
+  for (int64_t i = 0; i < num_heads; i++) {
+    scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + i * k_strideH;
+    scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
+    copy_stub<scalar_t>(k_buffer_ptr, key + i * head_size, head_size);
+    copy_stub<scalar_t>(v_buffer_ptr, value + i * head_size, head_size_v);
+  }
 
   using Vec = at::vec::Vectorized<float>;
 
@@ -661,13 +671,6 @@ void decode_attention_grouped_kernel_impl(
     scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
     copy_stub<scalar_t>(k_buffer_ptr, key, head_size);
     copy_stub<scalar_t>(v_buffer_ptr, value, head_size_v);
-    // for (int64_t j = 0; j < head_size_v; j++) {
-    //   k_buffer_ptr[j] = key[j];
-    //   v_buffer_ptr[j] = value[j];
-    // }
-    // for (int64_t j = head_size_v; j < head_size; j++) {
-    //   k_buffer_ptr[j] = key[j];
-    // }
   }
 
   using Vec = at::vec::Vectorized<float>;
@@ -948,6 +951,9 @@ at::Tensor decode_attention_cpu(
             query.data_ptr<scalar_t>(),
             k_buffer.data_ptr<scalar_t>(),
             v_buffer.data_ptr<scalar_t>(),
+            key.data_ptr<scalar_t>(),
+            value.data_ptr<scalar_t>(),
+            loc.data_ptr<int32_t>(),
             req_to_token.data_ptr<index_t>(),
             req_pool_indices.data_ptr<int64_t>(),
             seq_lens.data_ptr<int64_t>(),
