@@ -70,7 +70,10 @@ def decode_attention(
     q,
     k_buffer,
     v_buffer,
-    o,
+    key,
+    value,
+    v_head_dim,
+    loc,
     kv_indptr,
     kv_indices,
     seq_lens,
@@ -78,11 +81,14 @@ def decode_attention(
     sm_scale,
     logit_cap=0.0,
 ):
-    sgl_kernel.common_ops.decode_attention_cpu(
+    return sgl_kernel.common_ops.decode_attention_cpu(
         q,
-        o,
         k_buffer,
         v_buffer,
+        key,
+        value,
+        v_head_dim,
+        loc,
         attn_logits,
         kv_indptr,
         kv_indices,
