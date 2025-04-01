@@ -613,6 +613,15 @@ class DeepseekV2AttentionMLA(nn.Module):
             weight_names=["w_kc", "w_vc"], transpose_dims=[[1, 2], [1, 2]]
         )
 
+        self.qkv_proj_with_rope_is_int8 = None
+        if self.q_a_proj.weight.dtype == torch.int8:
+            assert (
+                self.q_a_proj.weight.dtype
+                == self.q_b_proj.weight.dtype
+                == self.kv_a_proj_with_mqa.weight.dtype
+            )
+            self.qkv_proj_with_rope_is_int8 = True
+
     def forward(
         self,
         positions: torch.Tensor,
@@ -703,65 +712,99 @@ class DeepseekV2AttentionMLA(nn.Module):
         hidden_states: torch.Tensor,
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
-        q_len = hidden_states.shape[0]
-        q_input = hidden_states.new_empty(
-            q_len, self.num_local_heads, self.kv_lora_rank + self.qk_rope_head_dim
-        )
-        if self.q_lora_rank is not None:
-            q = self.q_a_proj(hidden_states)[0]
-            q = self.q_a_layernorm(q)
-            q = self.q_b_proj(q)[0].view(-1, self.num_local_heads, self.qk_head_dim)
+        # TODO: add sth like forward_absorb_fused_mla_rope
+        if self.q_lora_rank is not None and self.use_intel_amx_backend:
+            q_input, k_input, v_input = sgl_kernel.cpu.qkv_proj_with_rope(
+                hidden_states,
+                self.q_a_proj.weight,
+                self.q_b_proj.weight,
+                self.kv_a_proj_with_mqa.weight,
+                self.w_kc,
+                self.q_a_layernorm.weight,
+                self.kv_a_layernorm.weight,
+                positions,
+                self.rotary_emb.cos_sin_cache,
+                self.kv_a_layernorm.variance_epsilon,
+                use_int8_w8a8=self.qkv_proj_with_rope_is_int8,
+                q_a_proj_scale=(
+                    self.q_a_proj.weight_scale
+                    if self.qkv_proj_with_rope_is_int8
+                    else None
+                ),
+                q_b_proj_scale=(
+                    self.q_b_proj.weight_scale
+                    if self.qkv_proj_with_rope_is_int8
+                    else None
+                ),
+                kv_a_proj_scale=(
+                    self.kv_a_proj_with_mqa.weight_scale
+                    if self.qkv_proj_with_rope_is_int8
+                    else None
+                ),
+            )
         else:
-            q = self.q_proj(hidden_states)[0].view(
-                -1, self.num_local_heads, self.qk_head_dim
+            q_len = hidden_states.shape[0]
+            q_input = hidden_states.new_empty(
+                q_len, self.num_local_heads, self.kv_lora_rank + self.qk_rope_head_dim
             )
-        q_nope, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
-        if self.w_kc.dtype == torch.float8_e4m3fnuz:
-            # TODO(kernel): add bmm_fp8 for torch.float8_e4m3fnuz
-            q_nope_out = torch.bmm(
-                q_nope.to(torch.bfloat16).transpose(0, 1),
-                self.w_kc.to(torch.bfloat16) * self.w_scale,
-            )
-        elif self.w_kc.dtype == torch.float8_e4m3fn:
-            q_nope_val, q_nope_scale = input_to_float8(
-                q_nope.transpose(0, 1), torch.float8_e4m3fn
-            )
-            q_nope_out = bmm_fp8(
-                q_nope_val, self.w_kc, q_nope_scale, self.w_scale, torch.bfloat16
-            )
-        else:
-            if self.use_intel_amx_backend:
-                # [Note] Align shapes of bmm inputs.
-                # Shapes of inputs:
-                #   q_nope: [M, B, K]
-                #   original self.w_kc: [B, K, N]
-                #   current self.w_kc (which has been converted in PackWeightMethod): [B, N, K]
-
-                # Shapes of inputs to sgl_kernel.cpu.bmm:
-                #   out: [B, M, N]
-                #   mat1: [B, M, K]
-                #   mat2: [B, N, K]
-                B = self.w_kc.size(0)
-                N = self.w_kc.size(1)
-                M = q_nope.size(0)
-
-                q_nope_out = q_input[..., : self.kv_lora_rank].transpose_(0, 1)
-                sgl_kernel.cpu.bmm(q_nope_out, q_nope.transpose(0, 1), self.w_kc)
+            if self.q_lora_rank is not None:
+                q = self.q_a_proj(hidden_states)[0]
+                q = self.q_a_layernorm(q)
+                q = self.q_b_proj(q)[0].view(-1, self.num_local_heads, self.qk_head_dim)
             else:
-                q_nope_out = torch.bmm(q_nope.transpose(0, 1), self.w_kc)
-                q_input[..., : self.kv_lora_rank] = q_nope_out.transpose(0, 1)
+                q = self.q_proj(hidden_states)[0].view(
+                    -1, self.num_local_heads, self.qk_head_dim
+                )
+            q_nope, q_pe = q.split(
+                [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
+            )
 
-        latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0]
-        v_input = latent_cache[..., : self.kv_lora_rank]
-        v_input = self.kv_a_layernorm(v_input.contiguous()).unsqueeze(1)
-        k_input = latent_cache.unsqueeze(1)
-        k_input[..., : self.kv_lora_rank] = v_input
-        k_pe = k_input[..., self.kv_lora_rank :]
+            if self.w_kc.dtype == torch.float8_e4m3fnuz:
+                # TODO(kernel): add bmm_fp8 for torch.float8_e4m3fnuz
+                q_nope_out = torch.bmm(
+                    q_nope.to(torch.bfloat16).transpose(0, 1),
+                    self.w_kc.to(torch.bfloat16) * self.w_scale,
+                )
+            elif self.w_kc.dtype == torch.float8_e4m3fn:
+                q_nope_val, q_nope_scale = input_to_float8(
+                    q_nope.transpose(0, 1), torch.float8_e4m3fn
+                )
+                q_nope_out = bmm_fp8(
+                    q_nope_val, self.w_kc, q_nope_scale, self.w_scale, torch.bfloat16
+                )
+            else:
+                if self.use_intel_amx_backend:
+                    # [Note] Align shapes of bmm inputs.
+                    # Shapes of inputs:
+                    #   q_nope: [M, B, K]
+                    #   original self.w_kc: [B, K, N]
+                    #   current self.w_kc (which has been converted in PackWeightMethod): [B, N, K]
 
-        q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
-        q_input[..., self.kv_lora_rank :] = q_pe
-        k_input[..., self.kv_lora_rank :] = k_pe
+                    # Shapes of inputs to sgl_kernel.cpu.bmm:
+                    #   out: [B, M, N]
+                    #   mat1: [B, M, K]
+                    #   mat2: [B, N, K]
+                    B = self.w_kc.size(0)
+                    N = self.w_kc.size(1)
+                    M = q_nope.size(0)
+
+                    q_nope_out = q_input[..., : self.kv_lora_rank].transpose_(0, 1)
+                    sgl_kernel.cpu.bmm(q_nope_out, q_nope.transpose(0, 1), self.w_kc)
+                else:
+                    q_nope_out = torch.bmm(q_nope.transpose(0, 1), self.w_kc)
+                    q_input[..., : self.kv_lora_rank] = q_nope_out.transpose(0, 1)
+
+            latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0]
+            v_input = latent_cache[..., : self.kv_lora_rank]
+            v_input = self.kv_a_layernorm(v_input.contiguous()).unsqueeze(1)
+            k_input = latent_cache.unsqueeze(1)
+            k_input[..., : self.kv_lora_rank] = v_input
+            k_pe = k_input[..., self.kv_lora_rank :]
+
+            q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
+            q_input[..., self.kv_lora_rank :] = q_pe
+            k_input[..., self.kv_lora_rank :] = k_pe
 
         attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)
         attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
