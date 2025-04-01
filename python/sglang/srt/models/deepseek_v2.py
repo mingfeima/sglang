@@ -136,10 +136,11 @@ class MoEGate(nn.Module):
         else:
             self.e_score_correction_bias = None
         self.quant_method = PackWeightMethod(weight_names=["weight"])
+        self.sgl_kernel_cpu_weight_packed_linear = sgl_kernel.cpu.weight_packed_linear
 
     def forward(self, hidden_states):
         if self.use_intel_amx_backend:
-            return sgl_kernel.cpu.weight_packed_linear(hidden_states, self.weight, None)
+            return self.sgl_kernel_cpu_weight_packed_linear(hidden_states, self.weight, None)
 
         logits = F.linear(hidden_states, self.weight, None)
         return logits
@@ -187,7 +188,15 @@ class DeepseekV2MoE(nn.Module):
             prefix=add_prefix("experts", prefix),
         )
 
+        # Cache shared_experts and related attributes
+        self.shared_experts = None
+        self.shared_experts_gate_up_proj = None
+        self.shared_experts_down_proj = None
         self.shared_experts_is_int8 = None
+        self.experts_impl = None
+        self.gate_impl = None
+        self.sgl_kernel_cpu_shared_expert = sgl_kernel.cpu.shared_expert
+
         if config.n_shared_experts is not None:
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
             self.shared_experts = DeepseekV2MLP(
@@ -198,44 +207,60 @@ class DeepseekV2MoE(nn.Module):
                 reduce_results=False,
                 prefix=add_prefix("shared_experts", prefix),
             )
-            if self.shared_experts.gate_up_proj.weight.dtype == torch.int8:
-                assert self.shared_experts.down_proj.weight.dtype == torch.int8
+            # Cache gate_up_proj and down_proj
+            self.shared_experts_gate_up_proj = self.shared_experts.gate_up_proj
+            self.shared_experts_down_proj = self.shared_experts.down_proj
+
+            # Cache whether shared_experts is int8
+            if self.shared_experts_gate_up_proj.weight.dtype == torch.int8:
+                assert self.shared_experts_down_proj.weight.dtype == torch.int8
                 self.shared_experts_is_int8 = True
-            
+
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
+        if self.gate_impl is None:
+            self.gate_impl = self.gate.forward
         # router_logits: (num_tokens, n_experts)
-        router_logits = self.gate(hidden_states)
-        fused_experts_out = self.experts(
+        router_logits = self.gate_impl(hidden_states)
+        if self.experts_impl is None:
+            self.experts_impl = self.experts.forward
+        fused_experts_out = self.experts_impl(
             hidden_states=hidden_states, router_logits=router_logits
         )
 
+        # Use cached attributes instead of dynamic access
+        gate_up_proj = self.shared_experts_gate_up_proj
+        down_proj = self.shared_experts_down_proj
+        use_intel_amx_backend = gate_up_proj.use_intel_amx_backend
+        shared_experts_is_int8 = self.shared_experts_is_int8
+        has_shared_experts = self.n_shared_experts is not None
+
         assert (
-            self.shared_experts.gate_up_proj.use_intel_amx_backend
-            == self.shared_experts.down_proj.use_intel_amx_backend
+            use_intel_amx_backend
+            == down_proj.use_intel_amx_backend
         )
         if (
-            self.n_shared_experts is not None
-            and self.shared_experts.gate_up_proj.use_intel_amx_backend
+            has_shared_experts and use_intel_amx_backend
         ):
             # [Note] inplace should be False in fused_experts.
             # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
             # While hidden_states is still needed in shared_expert.
-            final_hidden_states = sgl_kernel.cpu.shared_expert(
+            final_hidden_states = self.sgl_kernel_cpu_shared_expert(
                 hidden_states,
-                self.shared_experts.gate_up_proj.weight,
-                self.shared_experts.down_proj.weight,
+                gate_up_proj.weight,
+                down_proj.weight,
                 fused_experts_out,
                 self.routed_scaling_factor,
                 inplace=True,
-                use_int8_w8a8=self.shared_experts_is_int8,
-                w1_scale = self.shared_experts.gate_up_proj.weight_scale if self.shared_experts_is_int8 else None,
-                w2_scale = self.shared_experts.down_proj.weight_scale if self.shared_experts_is_int8 else None,
+                use_int8_w8a8=shared_experts_is_int8,
+                w1_scale=gate_up_proj.weight_scale if shared_experts_is_int8 else None,
+                w2_scale=down_proj.weight_scale if shared_experts_is_int8 else None,
             )
         else:
-            if self.n_shared_experts is not None:
+            shared_output = None
+            if has_shared_experts:
                 shared_output = self.shared_experts(hidden_states)
             final_hidden_states = fused_experts_out * self.routed_scaling_factor
             if shared_output is not None:
@@ -1111,8 +1136,9 @@ class DeepseekV2Model(nn.Module):
     ) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         residual = None
-        for i in range(len(self.layers)):
-            layer = self.layers[i]
+        layers = self.layers
+        for i in range(len(layers)):
+            layer = layers[i]
             hidden_states, residual = layer(
                 positions, hidden_states, forward_batch, residual
             )

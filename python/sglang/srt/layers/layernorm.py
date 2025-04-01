@@ -48,6 +48,11 @@ class RMSNorm(CustomOp):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
+        self._has_amx_support = cpu_has_amx_support()
+        if self._has_amx_support:
+            self.cpu_fused_add_rmsnorm = sgl_kernel.cpu.fused_add_rmsnorm
+            self.cpu_rmsnorm = sgl_kernel.cpu.rmsnorm
+
     def forward_cuda(
         self,
         x: torch.Tensor,
@@ -84,11 +89,14 @@ class RMSNorm(CustomOp):
         x: torch.Tensor,
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        if cpu_has_amx_support():
+        if self._has_amx_support:
+            weight_data = self.weight.data
+            eps = self.variance_epsilon
+
             if residual is not None:
-                sgl_kernel.cpu.fused_add_rmsnorm(x, residual, self.weight.data, self.variance_epsilon)
+                self.cpu_fused_add_rmsnorm(x, residual, weight_data, eps)
                 return x, residual
-            return sgl_kernel.cpu.rmsnorm(x, self.weight.data, self.variance_epsilon)
+            return self.cpu_rmsnorm(x, weight_data, eps)
         else:
             return self.forward_native(x, residual)
 

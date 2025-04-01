@@ -189,14 +189,14 @@ class W8A8Int8MoEMethod:
             ),
             requires_grad=False,
         )
-        layer.register_parameter("w13_weight", w13_weight)
+        layer.w13_weight = w13_weight
         set_weight_attrs(w13_weight, extra_weight_attrs)
 
         w2_weight = torch.nn.Parameter(
             torch.empty(num_experts, hidden_size, intermediate_size, dtype=torch.int8),
             requires_grad=False,
         )
-        layer.register_parameter("w2_weight", w2_weight)
+        layer.w2_weight = w2_weight
         set_weight_attrs(w2_weight, extra_weight_attrs)
 
         w13_weight_scale = torch.nn.Parameter(
@@ -207,8 +207,8 @@ class W8A8Int8MoEMethod:
             torch.ones(num_experts, hidden_size, 1, dtype=torch.float32),
             requires_grad=False,
         )
-        layer.register_parameter("w13_weight_scale", w13_weight_scale)
-        layer.register_parameter("w2_weight_scale", w2_weight_scale)
+        layer.w13_weight_scale = w13_weight_scale
+        layer.w2_weight_scale = w2_weight_scale
 
         extra_weight_attrs.update(
             {"quant_method": FusedMoeWeightScaleSupported.CHANNEL.value}
@@ -218,10 +218,10 @@ class W8A8Int8MoEMethod:
         set_weight_attrs(w2_weight_scale, extra_weight_attrs)
 
         w13_input_scale = None
-        layer.register_parameter("w13_input_scale", w13_input_scale)
+        layer.w13_input_scale = w13_input_scale
 
         w2_input_scale = None
-        layer.register_parameter("w2_input_scale", w2_input_scale)
+        layer.w2_input_scale = w2_input_scale
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if all(w.device.type == "cpu" for w in [layer.w13_weight, layer.w2_weight]):
