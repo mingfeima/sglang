@@ -467,7 +467,7 @@ void decode_attention_kernel_impl(
     scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + i * k_strideH;
     scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
     copy_stub<scalar_t>(k_buffer_ptr, key + i * head_size, head_size);
-    copy_stub<scalar_t>(v_buffer_ptr, value + i * head_size, head_size_v);
+    copy_stub<scalar_t>(v_buffer_ptr, value + i * head_size_v, head_size_v);
   }
 
   using Vec = at::vec::Vectorized<float>;
@@ -669,8 +669,8 @@ void decode_attention_grouped_kernel_impl(
   for (int64_t i = 0; i < num_heads_kv; i++) {
     scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + i * k_strideH;
     scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
-    copy_stub<scalar_t>(k_buffer_ptr, key, head_size);
-    copy_stub<scalar_t>(v_buffer_ptr, value, head_size_v);
+    copy_stub<scalar_t>(k_buffer_ptr, key + i * head_size, head_size);
+    copy_stub<scalar_t>(v_buffer_ptr, value + i * head_size_v, head_size_v);
   }
 
   using Vec = at::vec::Vectorized<float>;
@@ -878,7 +878,6 @@ at::Tensor decode_attention_cpu(
     at::Tensor& v_buffer,
     at::Tensor& key,
     at::Tensor& value,
-    int64_t v_head_dim,
     at::Tensor& loc,
     at::Tensor& attn_logits,
     at::Tensor& req_to_token,
@@ -912,9 +911,8 @@ at::Tensor decode_attention_cpu(
   int64_t num_heads_kv = k_buffer.size(1);
   int64_t head_size = query.size(2);
   int64_t head_size_v = v_buffer.size(2);
-  CHECK_EQ(v_head_dim, head_size_v);
 
-  at::Tensor output = at::empty({query.size(0), num_heads, v_head_dim}, query.options());
+  at::Tensor output = at::empty({query.size(0), num_heads, head_size_v}, query.options());
 
   int64_t num_kv_splits = attn_logits.size(2);
 
