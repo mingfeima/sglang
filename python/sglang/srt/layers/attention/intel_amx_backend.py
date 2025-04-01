@@ -101,10 +101,17 @@ class IntelAMXAttnBackend(AttentionBackend):
 
         if q.ndim == 2:
             q = q.view(-1, layer.tp_q_head_num, layer.qk_head_dim)
-        output = self.decode_attention_fwd(
+
+        if layer.qk_head_dim != layer.v_head_dim:
+            o = q.new_empty((q.shape[0], layer.tp_q_head_num, layer.v_head_dim))
+        else:
+            o = torch.empty_like(q)
+
+        self.decode_attention_fwd(
             q,
             forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id),
             forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id),
+            o,
             k,
             v,
             forward_batch.out_cache_loc,
@@ -116,4 +123,4 @@ class IntelAMXAttnBackend(AttentionBackend):
             layer.logit_cap,
         )
 
-        return output
+        return o

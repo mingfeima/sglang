@@ -876,6 +876,7 @@ at::Tensor decode_attention_cpu(
     at::Tensor& query,
     at::Tensor& k_buffer,
     at::Tensor& v_buffer,
+    at::Tensor& output,
     at::Tensor& key,
     at::Tensor& value,
     at::Tensor& loc,
@@ -887,7 +888,7 @@ at::Tensor decode_attention_cpu(
     double logit_cap) {
   RECORD_FUNCTION(
       "sgl-kernel::decode_attention_cpu",
-      std::vector<c10::IValue>({query, k_buffer, v_buffer, attn_logits, req_to_token, req_pool_indices, seq_lens}));
+      std::vector<c10::IValue>({query, output, k_buffer, v_buffer, attn_logits, req_to_token, req_pool_indices, seq_lens}));
 
   CHECK_INPUT(query);
   CHECK_LAST_DIM_CONTIGUOUS_INPUT(k_buffer);
@@ -911,8 +912,6 @@ at::Tensor decode_attention_cpu(
   int64_t num_heads_kv = k_buffer.size(1);
   int64_t head_size = query.size(2);
   int64_t head_size_v = v_buffer.size(2);
-
-  at::Tensor output = at::empty({query.size(0), num_heads, head_size_v}, query.options());
 
   int64_t num_kv_splits = attn_logits.size(2);
 
