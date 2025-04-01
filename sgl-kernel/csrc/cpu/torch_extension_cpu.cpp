@@ -36,7 +36,7 @@ std::tuple<at::Tensor, at::Tensor> biased_grouped_topk_cpu(at::Tensor& hidden_st
     at::Tensor& correction_bias, int64_t topk, bool renormalize, int64_t num_expert_group, int64_t topk_group);
 
 // attention
-at::Tensor decode_attention_cpu(at::Tensor& query, at::Tensor& k_cache, at::Tensor& v_cache, at::Tensor& output,
+void decode_attention_cpu(at::Tensor& query, at::Tensor& k_cache, at::Tensor& v_cache, at::Tensor& output,
     at::Tensor& key, at::Tensor& value, at::Tensor& loc, at::Tensor& attn_logits,
     at::Tensor& req_to_token, at::Tensor& req_pool_indices, at::Tensor& seq_lens,
     double sm_scale, double logit_cap);

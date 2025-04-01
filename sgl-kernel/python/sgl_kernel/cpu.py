@@ -81,7 +81,7 @@ def decode_attention(
     sm_scale,
     logit_cap=0.0,
 ):
-    return sgl_kernel.common_ops.decode_attention_cpu(
+    sgl_kernel.common_ops.decode_attention_cpu(
         q,
         k_buffer,
         v_buffer,

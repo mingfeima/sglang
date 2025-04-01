@@ -872,7 +872,7 @@ void decode_attention_grouped_kernel_impl(
 // req_pool_indices: [num_seqs] int64
 // seq_lens:         [num_seqs] int64
 //
-at::Tensor decode_attention_cpu(
+void decode_attention_cpu(
     at::Tensor& query,
     at::Tensor& k_buffer,
     at::Tensor& v_buffer,
@@ -1000,5 +1000,4 @@ at::Tensor decode_attention_cpu(
       }
     });
   });
-  return output;
 }
