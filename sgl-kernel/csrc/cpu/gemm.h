@@ -99,6 +99,22 @@ void tinygemm_kernel(
     int64_t ldc,
     bool brg);
 
+template <typename scalar_t>
+void tinygemm_kernel(
+    const uint8_t* __restrict__ A,
+    const int8_t* __restrict__ B,
+    scalar_t* __restrict__ C,
+    int32_t* __restrict__ Ctmp,
+    const float* __restrict__ As,
+    const float* __restrict__ Bs,
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int64_t lda,
+    int64_t ldb,
+    int64_t ldc,
+    bool brg);
+
 // TODO: debug print, remove me later
 inline void print_16x32i(const __m512i x) {
   int32_t a[16];
