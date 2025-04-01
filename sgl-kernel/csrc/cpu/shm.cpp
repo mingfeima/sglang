@@ -730,13 +730,18 @@ torch::Tensor& all_gather(torch::Tensor& result, torch::Tensor& data, int dim, s
   int dtype_size = data_size / numel;
   size_t dim_size = dim_el * dtype_size;
   int dim_count = data_size / dim_size;
+  auto data_ptr = (char*)(data.data_ptr());
+  auto result_ptr = (char*)(result.data_ptr());
   for (int i = 0; i < dim_count; i++) {
     for (int offset = 0; offset < dim_size; offset += MAX_BUF_SIZE) {
-      auto data_ptr = ((char*)(data.data_ptr()) + i * dim_size + offset);
       size_t chunk_size = dim_size - offset > MAX_BUF_SIZE ? MAX_BUF_SIZE : dim_size - offset;
       size_t chunk_el = chunk_size / dtype_size;
-      auto result_ptr = (char*)(result.data_ptr() + i * dim_size * world_size + offset);
-      naive_all_gather(result_ptr, data_ptr, dim_size, chunk_size, chunk_el);
+      naive_all_gather(
+        result_ptr + i * dim_size * world_size + offset,
+        data_ptr + i * dim_size + offset,
+        dim_size,
+        chunk_size,
+        chunk_el);
     }
   }
   return result;
