@@ -34,6 +34,19 @@ inline void copy_stub(scalar_t* __restrict__ out, const float* __restrict__ acc,
   }
 }
 
+template <typename scalar_t>
+inline void copy_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ src, int64_t size) {
+  using bVec = at::vec::Vectorized<scalar_t>;
+  int64_t d = 0;
+  for (; d <= size - bVec::size(); d += bVec::size()) {
+    bVec out_bvec = bVec::loadu(src + d);
+    out_bvec.store(out + d);
+  }
+  for (; d < size; ++d) {
+    out[d] = src[d];
+  }
+}
+
 // GEMM handles query @ key (indexed) x scale
 //   A : [M, K]
 //   B : [N, K] indexed
@@ -646,13 +659,15 @@ void decode_attention_grouped_kernel_impl(
   for (int64_t i = 0; i < num_heads_kv; i++) {
     scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + i * k_strideH;
     scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
-    for (int64_t j = 0; j < head_size_v; j++) {
-      k_buffer_ptr[j] = key[j];
-      v_buffer_ptr[j] = value[j];
-    }
-    for (int64_t j = head_size_v; j < head_size; j++) {
-      k_buffer_ptr[j] = key[j];
-    }
+    copy_stub<scalar_t>(k_buffer_ptr, key, head_size);
+    copy_stub<scalar_t>(v_buffer_ptr, value, head_size_v);
+    // for (int64_t j = 0; j < head_size_v; j++) {
+    //   k_buffer_ptr[j] = key[j];
+    //   v_buffer_ptr[j] = value[j];
+    // }
+    // for (int64_t j = head_size_v; j < head_size; j++) {
+    //   k_buffer_ptr[j] = key[j];
+    // }
   }
 
   using Vec = at::vec::Vectorized<float>;
