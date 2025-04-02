@@ -445,6 +445,7 @@ void decode_attention_kernel_impl(
     const scalar_t* __restrict__ key,
     const scalar_t* __restrict__ value,
     const int32_t* __restrict__ loc,
+    int64_t loc_size,
     const index_t* __restrict__ req_to_token,
     const int64_t* __restrict__ req_pool_indices,
     const int64_t* __restrict__ seq_lens,
@@ -462,13 +463,17 @@ void decode_attention_kernel_impl(
     int64_t max_num_reqs,
     int64_t max_context_len,
     int64_t max_total_num_tokens) {
-  int64_t loc_val = loc[0];
-  for (int64_t i = 0; i < num_heads; i++) {
-    scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + i * k_strideH;
-    scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
-    copy_stub<scalar_t>(k_buffer_ptr, key + i * head_size, head_size);
-    copy_stub<scalar_t>(v_buffer_ptr, value + i * head_size_v, head_size_v);
-  }
+  at::parallel_for(0, loc_size, GRAIN_SIZE / 64, [&](int64_t begin, int64_t end) {
+    for (int64_t i = begin; i < end; i++) {
+      int64_t loc_val = loc[i];
+      for (int64_t j = 0; j < num_heads; j++) {
+        scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + j * k_strideH;
+        scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + j * v_strideH;
+        copy_stub<scalar_t>(k_buffer_ptr, key + j * head_size, head_size);
+        copy_stub<scalar_t>(v_buffer_ptr, value + j * head_size_v, head_size_v);
+      }
+    }
+  });
 
   using Vec = at::vec::Vectorized<float>;
 
@@ -647,6 +652,7 @@ void decode_attention_grouped_kernel_impl(
     const scalar_t* __restrict__ key,
     const scalar_t* __restrict__ value,
     const int32_t* __restrict__ loc,
+    int64_t loc_size,
     const index_t* __restrict__ req_to_token,
     const int64_t* __restrict__ req_pool_indices,
     const int64_t* __restrict__ seq_lens,
@@ -665,13 +671,17 @@ void decode_attention_grouped_kernel_impl(
     int64_t max_num_reqs,
     int64_t max_context_len,
     int64_t max_total_num_tokens) {
-  int64_t loc_val = loc[0];
-  for (int64_t i = 0; i < num_heads_kv; i++) {
-    scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + i * k_strideH;
-    scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + i * v_strideH;
-    copy_stub<scalar_t>(k_buffer_ptr, key + i * head_size, head_size);
-    copy_stub<scalar_t>(v_buffer_ptr, value + i * head_size_v, head_size_v);
-  }
+  at::parallel_for(0, loc_size, GRAIN_SIZE / 64, [&](int64_t begin, int64_t end) {
+    for (int64_t i = begin; i < end; i++) {
+      int64_t loc_val = loc[i];
+      for (int64_t j = 0; j < num_heads_kv; j++) {
+        scalar_t* k_buffer_ptr = k_buffer + loc_val * k_strideN + j * k_strideH;
+        scalar_t* v_buffer_ptr = v_buffer + loc_val * v_strideN + j * v_strideH;
+        copy_stub<scalar_t>(k_buffer_ptr, key + j * head_size, head_size);
+        copy_stub<scalar_t>(v_buffer_ptr, value + j * head_size_v, head_size_v);
+      }
+    }
+  });
 
   using Vec = at::vec::Vectorized<float>;
 
@@ -901,7 +911,6 @@ void decode_attention_cpu(
   CHECK_DIM(3, key);
   CHECK_DIM(3, value);
   CHECK_DIM(1, loc);
-  TORCH_CHECK(loc.numel() == 1, "decode_attention_cpu: expect loc to be a scalar, got ", loc.numel());
 
   int64_t num_seqs = seq_lens.size(0);
   int64_t max_num_reqs = req_to_token.size(0);
@@ -951,6 +960,7 @@ void decode_attention_cpu(
             key.data_ptr<scalar_t>(),
             value.data_ptr<scalar_t>(),
             loc.data_ptr<int32_t>(),
+            loc.numel(),
             req_to_token.data_ptr<index_t>(),
             req_pool_indices.data_ptr<int64_t>(),
             seq_lens.data_ptr<int64_t>(),
@@ -979,6 +989,7 @@ void decode_attention_cpu(
             key.data_ptr<scalar_t>(),
             value.data_ptr<scalar_t>(),
             loc.data_ptr<int32_t>(),
+            loc.numel(),
             req_to_token.data_ptr<index_t>(),
             req_pool_indices.data_ptr<int64_t>(),
             seq_lens.data_ptr<int64_t>(),
