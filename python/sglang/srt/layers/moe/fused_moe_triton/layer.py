@@ -97,7 +97,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             ),
             requires_grad=False,
         )
-        layer.register_parameter("w13_weight", w13_weight)
+        layer.w13_weight = w13_weight
         set_weight_attrs(w13_weight, extra_weight_attrs)
 
         # down_proj (row parallel)
@@ -107,7 +107,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             ),
             requires_grad=False,
         )
-        layer.register_parameter("w2_weight", w2_weight)
+        layer.w2_weight = w2_weight
         set_weight_attrs(w2_weight, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
