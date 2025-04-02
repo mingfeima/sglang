@@ -80,6 +80,7 @@ class BenchArgs:
     batch_size: Tuple[int] = (1,)
     input_len: Tuple[int] = (1024,)
     output_len: Tuple[int] = (16,)
+    prompt_filename: str = ""
     result_filename: str = "result.jsonl"
     correctness_test: bool = False
     # This is only used for correctness test
@@ -98,6 +99,9 @@ class BenchArgs:
         )
         parser.add_argument(
             "--output-len", type=int, nargs="+", default=BenchArgs.output_len
+        )
+        parser.add_argument(
+            "--prompt-filename", type=str, default=""
         )
         parser.add_argument(
             "--result-filename", type=str, default=BenchArgs.result_filename
@@ -202,8 +206,8 @@ def prepare_extend_inputs_for_correctness_test(
     return reqs
 
 
-def prepare_synthetic_inputs_for_latency_test(batch_size, input_len):
-    input_ids = np.ones((batch_size, input_len), dtype=np.int32)
+def prepare_synthetic_inputs_for_latency_test(batch_size, input_len, custom_inputs=[]):
+    input_ids = custom_inputs if len(custom_inputs) > 0 else np.ones((batch_size, input_len), dtype=np.int32)
     sampling_params = SamplingParams(
         temperature=0,
         max_new_tokens=BenchArgs.output_len,
@@ -467,12 +471,26 @@ def latency_test(
 
     rank_print("Benchmark ...")
 
+    # Read custom prompts from the file specified by `--prompt-filename`
+    custom_prompts = list()
+    if bench_args.prompt_filename != "":
+        if not os.path.exists(bench_args.prompt_filename):
+            rank_print(f"Customer prompt file {bench_args.prompt_filename} does not exist. Using dummy data...")
+        else:
+            with open(bench_args.prompt_filename, 'r') as pf:
+                prompt_pool = json.load(pf)
+                prompt_dict = prompt_pool['deepseekr1'][str(bench_args.input_len[0])]
+                for index in range(bench_args.batch_size[0]):
+                    custom_prompts.append(prompt_dict[str(index)])
+
+    custom_inputs = [tokenizer.encode(p.strip()) for p in custom_prompts]
+
     # Run the sweep
     result_list = []
     for bs, il, ol in itertools.product(
         bench_args.batch_size, bench_args.input_len, bench_args.output_len
     ):
-        reqs = prepare_synthetic_inputs_for_latency_test(bs, il)
+        reqs = prepare_synthetic_inputs_for_latency_test(bs, il, custom_inputs)
         ret = latency_test_run_once(
             bench_args.run_name,
             model_runner,
