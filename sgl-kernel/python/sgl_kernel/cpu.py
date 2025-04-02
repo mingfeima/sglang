@@ -66,6 +66,42 @@ def convert_weight_packed(weight):
     return sgl_kernel.common_ops.convert_weight_packed(weight)
 
 
+def qkv_proj_with_rope(
+    hidden_states,
+    q_a_proj_weight,
+    q_b_proj_weight,
+    kv_a_proj_weight,
+    w_kc,
+    q_a_layernorm_weight,
+    kv_a_layernorm_weight,
+    positions,
+    cos_sin_cache,
+    eps,
+    use_int8_w8a8=False,
+    q_a_proj_scale=None,
+    q_b_proj_scale=None,
+    kv_a_proj_scale=None,
+    is_vnni=True,
+):
+    return sgl_kernel.common_ops.qkv_proj_with_rope(
+        hidden_states,
+        q_a_proj_weight,
+        q_b_proj_weight,
+        kv_a_proj_weight,
+        w_kc,
+        q_a_layernorm_weight,
+        kv_a_layernorm_weight,
+        positions,
+        cos_sin_cache,
+        eps,
+        use_int8_w8a8,
+        q_a_proj_scale,
+        q_b_proj_scale,
+        kv_a_proj_scale,
+        is_vnni,
+    )
+
+
 def decode_attention(
     q,
     k_buffer,
