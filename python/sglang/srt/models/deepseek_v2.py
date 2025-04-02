@@ -614,13 +614,14 @@ class DeepseekV2AttentionMLA(nn.Module):
         )
 
         self.qkv_proj_with_rope_is_int8 = None
-        if self.q_a_proj.weight.dtype == torch.int8:
-            assert (
-                self.q_a_proj.weight.dtype
-                == self.q_b_proj.weight.dtype
-                == self.kv_a_proj_with_mqa.weight.dtype
-            )
-            self.qkv_proj_with_rope_is_int8 = True
+        if self.q_lora_rank is not None:
+            if self.q_a_proj.weight.dtype == torch.int8:
+                assert (
+                    self.q_a_proj.weight.dtype
+                    == self.q_b_proj.weight.dtype
+                    == self.kv_a_proj_with_mqa.weight.dtype
+                )
+                self.qkv_proj_with_rope_is_int8 = True
 
     def forward(
         self,
