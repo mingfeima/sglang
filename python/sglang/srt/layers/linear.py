@@ -57,6 +57,7 @@ WEIGHT_LOADER_V2_SUPPORTED = [
     "FBGEMMFp8LinearMethod",
     "ModelOptFp8LinearMethod",
     "IPEXAWQLinearMethod",
+    "AWQPTLinearMethod",
 ]
 
 
@@ -632,8 +633,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             # for the packing.
             packed_dim = getattr(param, "packed_dim", None)
             if packed_dim == output_dim:
-                shard_size = shard_size // param.packed_factor
-                shard_offset = shard_offset // param.packed_factor
+                shard_size = shard_size // param.pack_factor
+                shard_offset = shard_offset // param.pack_factor
                 # Special case for Marlin.
                 shard_size, shard_offset = adjust_marlin_shard(
                     param, shard_size, shard_offset
@@ -1082,8 +1083,8 @@ class QKVParallelLinear(ColumnParallelLinear):
             # for the packing.
             packed_dim = getattr(param, "packed_dim", None)
             if packed_dim == output_dim:
-                shard_size = shard_size // param.packed_factor
-                shard_offset = shard_offset // param.packed_factor
+                shard_size = shard_size // param.pack_factor
+                shard_offset = shard_offset // param.pack_factor
 
                 # Special case for Marlin.
                 shard_size, shard_offset = adjust_marlin_shard(
