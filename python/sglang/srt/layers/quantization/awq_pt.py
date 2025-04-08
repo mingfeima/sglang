@@ -4,12 +4,19 @@ from typing import Any, Dict, List, Optional
 import torch
 from torch import Tensor, nn
 
-from sglang.srt.layers.linear import LinearMethodBase
+from sglang.srt.layers.linear import LinearBase, LinearMethodBase
+from sglang.srt.layers.moe.fused_moe_triton import (
+    FusedMoE,
+    FusedMoEMethodBase,
+    FusedMoeWeightScaleSupported,
+)
 from sglang.srt.layers.parameter import GroupQuantScaleParameter, PackedvLLMParameter
 from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
 )
+from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
+from sglang.srt.utils import set_weight_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -70,16 +77,16 @@ class AWQPTConfig(QuantizationConfig):
 
     def get_quant_method(
         self,
-        layer: torch.nn.Module,
+        layer: nn.Module,
         prefix: str,
     ) -> Optional["QuantizeMethodBase"]:
-        from sglang.srt.layers.linear import LinearBase
-        from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
+        if any(name in prefix for name in self.modules_to_not_convert):
+            return None
 
         if isinstance(layer, LinearBase):
-            if any(name in prefix for name in self.modules_to_not_convert):
-                return None
             return AWQPTLinearMethod(self)
+        elif isinstance(layer, FusedMoE):
+            return AWQPTMoEMethod(self)
         elif isinstance(layer, VocabParallelEmbedding):
             if not self.lm_head_quantized:
                 return None
@@ -140,6 +147,8 @@ class AWQPTLinearMethod(LinearMethodBase):
     def __init__(self, quant_config: AWQPTConfig):
         self.quant_config = quant_config
 
+    # create weight in AutoAWQ layout
+    # vllm.model_executor.layers.quantization.awq.AWQLinearMethod
     def create_weights(
         self,
         layer,
@@ -156,7 +165,6 @@ class AWQPTLinearMethod(LinearMethodBase):
         pack_factor = self.quant_config.pack_factor
         num_groups = input_size_per_partition // group_size
 
-        # create weight in AutoAWQ layout
         qweight = PackedvLLMParameter(
             data=torch.empty(
                 input_size_per_partition,
@@ -251,3 +259,100 @@ class AWQPTLinearMethod(LinearMethodBase):
         if bias is not None:
             out = out + bias
         return out
+
+
+class AWQPTMoEMethod(FusedMoEMethodBase):
+
+    def __init__(self, quant_config: AWQPTConfig):
+        self.quant_config = quant_config
+
+    # vllm.model_executor.layers.quantization.awq_marlin.AWQMoEMethod
+    def create_weights(
+        self,
+        layer: nn.Module,
+        num_experts: int,
+        hidden_size: int,
+        intermediate_size: int,
+        params_dtype: torch.dtype,
+        **extra_weight_attrs,
+    ):
+        extra_weight_attrs.update(
+            {
+                "is_transposed": True,
+                "quant_method": FusedMoeWeightScaleSupported.GROUP.value,
+            }
+        )
+
+        w13_qweight = nn.Parameter(
+            torch.empty(
+                num_experts,
+                hidden_size,
+                2 * intermediate_size // self.quant_config.pack_factor,
+                dtype=torch.int32,
+            ),
+            requires_grad=False,
+        )
+        layer.register_parameter("w13_qweight", w13_qweight)
+        set_weight_attrs(w13_qweight, extra_weight_attrs)
+
+        w2_qweight = nn.Parameter(
+            torch.empty(
+                num_experts,
+                intermediate_size,
+                hidden_size // self.quant_config.pack_factor,
+                dtype=torch.int32,
+            ),
+            requires_grad=False,
+        )
+        layer.register_parameter("w2_qweight", w2_qweight)
+        set_weight_attrs(w2_qweight, extra_weight_attrs)
+
+        num_groups_w13 = hidden_size // self.quant_config.group_size
+        num_groups_w2 = intermediate_size // self.quant_config.group_size
+
+        # WEIGHT_SCALES
+        # Allocate 2 scales for w1 and w3 respectively.
+        w13_scales = nn.Parameter(
+            torch.empty(
+                num_experts, num_groups_w13, intermediate_size * 2, dtype=params_dtype
+            ),
+            requires_grad=False,
+        )
+        layer.register_parameter("w13_scales", w13_scales)
+        set_weight_attrs(w13_scales, extra_weight_attrs)
+
+        w2_scales = nn.Parameter(
+            torch.empty(num_experts, num_groups_w2, hidden_size, dtype=params_dtype),
+            requires_grad=False,
+        )
+        layer.register_parameter("w2_scales", w2_scales)
+        set_weight_attrs(w2_scales, extra_weight_attrs)
+
+        # WEIGHT_ZERO_POINT
+        # Allocate 2 zero points for w1 and w3 respectively.
+        w13_qzeros = nn.Parameter(
+            torch.empty(
+                num_experts,
+                num_groups_w13,
+                2 * intermediate_size // self.quant_config.pack_factor,
+                dtype=torch.int32,
+            ),
+            requires_grad=False,
+        )
+        layer.register_parameter("w13_qzeros", w13_qzeros)
+        set_weight_attrs(w13_qzeros, extra_weight_attrs)
+
+        w2_qzeros = nn.Parameter(
+            torch.empty(
+                num_experts,
+                num_groups_w2,
+                hidden_size // self.quant_config.pack_factor,
+                dtype=torch.int32,
+            ),
+            requires_grad=False,
+        )
+        layer.register_parameter("w2_qzeros", w2_qzeros)
+        set_weight_attrs(w2_qzeros, extra_weight_attrs)
+
+    def process_weights_after_loading(self, layer: nn.Module) -> None:
+        pass
