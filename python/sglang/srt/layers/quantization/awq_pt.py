@@ -19,10 +19,7 @@ logger = logging.getLogger(__name__)
 class AWQPTConfig(QuantizationConfig):
     _supported_group_sizes = [32, 64, 128, 256]
 
-    """Config class for Int4 Quantization, backed by PyTorch int4pack_mm.
-
-    - Weight: static, per-group, asymmetric
-    - Activation: FP32, BF16, or FP16
+    """Config class for Int4 weight-only Quantization, backed by PyTorch int4pack_mm.
     """
 
     def __init__(
