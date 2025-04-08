@@ -150,7 +150,6 @@ sources = [
     "csrc/cpu/bmm.cpp",
     "csrc/cpu/decode.cpp",
     "csrc/cpu/extend.cpp",
-    "csrc/cpu/fp8_convert.cpp",
     "csrc/cpu/gemm.cpp",
     "csrc/cpu/gemm_int8.cpp",
     "csrc/cpu/moe.cpp",

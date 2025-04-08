@@ -299,12 +299,3 @@ def silu_and_mul(
 
 def bmm(out, mat1, mat2, is_vnni=True, scale=None):
     return sgl_kernel.common_ops.bmm_cpu(out, mat1, mat2, is_vnni, scale)
-
-def cvt_e4m3_to_bf16(
-    input,
-    out,
-    len,
-):
-    return sgl_kernel.common_ops.cvt_e4m3_to_bf16(
-        input, out, len
-    )
