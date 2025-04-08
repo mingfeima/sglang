@@ -22,6 +22,7 @@ from vllm.model_executor.layers.quantization.marlin import MarlinConfig
 from vllm.model_executor.layers.quantization.qqq import QQQConfig
 from vllm.model_executor.layers.quantization.tpu_int8 import Int8TpuConfig
 
+from python.sglang.srt.layers.quantization.awq_pt import AWQPTConfig
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.quantization.blockwise_int8 import BlockInt8Config
 from sglang.srt.layers.quantization.fp8 import Fp8Config
@@ -51,6 +52,7 @@ QUANTIZATION_METHODS: Dict[str, Type[QuantizationConfig]] = {
     "experts_int8": ExpertsInt8Config,
     "w8a8_int8": W8A8Int8Config,
     "w8a8_fp8": W8A8Fp8Config,
+    "awq_pt": AWQPTConfig,
 }
 
 
