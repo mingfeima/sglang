@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 # NOTE: once we have a CPU INT4 kernel in SGLang, especially with support for
-# integer zero-point domain, this whole file can be removed.
+# integer zero-point domain, we can replace torch._int4pack_mm
 class AWQPTConfig(QuantizationConfig):
     _supported_group_sizes = [32, 64, 128, 256]
 
