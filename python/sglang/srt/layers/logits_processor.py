@@ -416,7 +416,7 @@ class LogitsProcessor(nn.Module):
             dp_gather(hidden_states, local_hidden_states, logits_metadata, "embedding")
 
         if hasattr(lm_head, "weight"):
-            if lm_head.use_intel_amx_backend:
+            if getattr(lm_head, "use_intel_amx_backend", False):
                 logits = sgl_kernel.cpu.weight_packed_linear(
                     hidden_states.to(lm_head.weight.dtype), lm_head.weight, None
                 )
