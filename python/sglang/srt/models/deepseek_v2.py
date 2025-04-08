@@ -639,10 +639,11 @@ class DeepseekV2AttentionMLA(nn.Module):
 
         params = MParams()
         params.q_lora_rank = self.q_lora_rank
-        params.q_a_proj = self.q_a_proj
-        params.q_b_proj = self.q_b_proj
+        if params.q_lora_rank is not None:
+            params.q_a_proj = self.q_a_proj
+            params.q_b_proj = self.q_b_proj
+            params.q_a_layernorm = self.q_a_layernorm
         params.kv_a_proj_with_mqa = self.kv_a_proj_with_mqa
-        params.q_a_layernorm = self.q_a_layernorm
         params.kv_a_layernorm = self.kv_a_layernorm
         params.rotary_emb = self.rotary_emb
         params.qkv_proj_with_rope_is_int8 = self.qkv_proj_with_rope_is_int8
