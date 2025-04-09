@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # NOTE: once we have a CPU INT4 kernel in SGLang, especially with support for
 # integer zero-point domain, we can replace torch._int4pack_mm
 # TODO: support compressed-tensors format
-class AWQPTConfig(QuantizationConfig):
+class Int4CPUConfig(QuantizationConfig):
     _supported_group_sizes = [32, 64, 128, 256]
 
     """Config class for Int4 weight-only Quantization, backed by PyTorch int4pack_mm.
@@ -54,14 +54,14 @@ class AWQPTConfig(QuantizationConfig):
 
     @classmethod
     def get_name(self) -> str:
-        return "awq_pt"
+        return "int4_cpu"
 
     @classmethod
     def get_config_filenames(cls) -> List[str]:
         return []
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "AWQPTConfig":
+    def from_config(cls, config: Dict[str, Any]) -> "Int4CPUConfig":
         weight_bits = cls.get_from_keys(config, ["bits"])
         group_size = cls.get_from_keys(config, ["group_size"])
         zero_point = cls.get_from_keys(config, ["zero_point"])
@@ -86,13 +86,13 @@ class AWQPTConfig(QuantizationConfig):
             return None
 
         if isinstance(layer, LinearBase):
-            return AWQPTLinearMethod(self)
+            return Int4CPULinearMethod(self)
         elif isinstance(layer, FusedMoE):
-            return AWQPTMoEMethod(self)
+            return Int4CPUMoEMethod(self)
         elif isinstance(layer, VocabParallelEmbedding):
             if not self.lm_head_quantized:
                 return None
-            return AWQPTLinearMethod(self)
+            return Int4CPULinearMethod(self)
 
         return None
 
@@ -149,9 +149,9 @@ class AWQPTConfig(QuantizationConfig):
         )
 
 
-class AWQPTLinearMethod(LinearMethodBase):
+class Int4CPULinearMethod(LinearMethodBase):
 
-    def __init__(self, quant_config: AWQPTConfig):
+    def __init__(self, quant_config: Int4CPUConfig):
         self.quant_config = quant_config
 
     # vllm.model_executor.layers.quantization.awq.AWQLinearMethod
@@ -239,9 +239,9 @@ class AWQPTLinearMethod(LinearMethodBase):
         return out
 
 
-class AWQPTMoEMethod(FusedMoEMethodBase):
+class Int4CPUMoEMethod(FusedMoEMethodBase):
 
-    def __init__(self, quant_config: AWQPTConfig):
+    def __init__(self, quant_config: Int4CPUConfig):
         self.quant_config = quant_config
 
     # vllm.model_executor.layers.quantization.awq_marlin.AWQMoEMethod
