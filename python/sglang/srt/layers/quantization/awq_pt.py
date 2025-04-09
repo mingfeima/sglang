@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # NOTE: once we have a CPU INT4 kernel in SGLang, especially with support for
 # integer zero-point domain, we can replace torch._int4pack_mm
+# TODO: support compressed-tensors format
 class AWQPTConfig(QuantizationConfig):
     _supported_group_sizes = [32, 64, 128, 256]
 
@@ -122,6 +123,11 @@ class AWQPTConfig(QuantizationConfig):
 
     @classmethod
     def is_compatible(cls, quant_config: Dict[str, Any]):
+        from vllm.platforms import current_platform
+
+        if not current_platform.is_cpu():
+            return False
+
         # Extract data from quant config.
         quant_method = quant_config.get("quant_method", "").lower()
         num_bits = quant_config.get("bits")
@@ -230,16 +236,7 @@ class AWQPTLinearMethod(LinearMethodBase):
         qzeros_unpacked = qzeros_unpacked.flatten(1)
         zeros = ((8 - qzeros_unpacked.float()) * scales.float()).to(scales.dtype)
 
-        if qweight.device.type == "cuda":
-            convert_weight = torch._convert_weight_to_int4pack
-            self._mm = torch._weight_int4pack_mm
-            innerKTiles = 8
-        elif qweight.device.type == "cpu":
-            convert_weight = torch._convert_weight_to_int4pack_for_cpu
-            self._mm = torch._weight_int4pack_mm_for_cpu
-            innerKTiles = 1
-
-        qweight = convert_weight(qweight_unpacked, innerKTiles)
+        qweight = torch._convert_weight_to_int4pack_for_cpu(qweight_unpacked, 1)
         scales_zeros = torch.stack([scales, zeros], dim=-1)  # (K / group_size, N, 2)
 
         layer.qweight = nn.Parameter(qweight, requires_grad=False)
@@ -253,7 +250,7 @@ class AWQPTLinearMethod(LinearMethodBase):
         x: Tensor,
         bias: Optional[Tensor] = None,
     ):
-        out = self._mm(
+        out = torch._weight_int4pack_mm_for_cpu(
             x, layer.qweight, self.quant_config.group_size, layer.scales_zeros
         )
         if bias is not None:
