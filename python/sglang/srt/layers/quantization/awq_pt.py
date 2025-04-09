@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 from torch import Tensor, nn
@@ -217,31 +217,12 @@ class AWQPTLinearMethod(LinearMethodBase):
         layer.num_groups = num_groups
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        # convert AutoAWQ weight format to PyTorch's int4mm
-        qweight = layer.qweight.data  # (K, N / 8)
-        qzeros = layer.qzeros.data  # (K / group_size, N / 8)
-        scales = layer.scales.data  # (K / group_size, N)
-        layer.group_size = qweight.shape[0] // qzeros.shape[0]
-
-        # https://github.com/casper-hansen/AutoAWQ/blob/23d584c2/awq/modules/triton/gemm.py#L73-L86
-        bitshifts = torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], dtype=torch.int32) * 4
-        qweight_unpacked = (qweight.unsqueeze(-1) >> bitshifts) & 0xF
-        qweight_unpacked = qweight_unpacked.flatten(1).T.contiguous()
-
-        # PT int4pack_mm only supports zero_point in float domain, but AWQ uses integer domain.
-        # Hence, we need to convert zero_point to float domain.
-        # integer domain: w = (qweight - qzeros) * scales
-        #   float domain: w = qweight * scales + zeros - scales * 8
-        qzeros_unpacked = (qzeros.unsqueeze(-1) >> bitshifts) & 0xF
-        qzeros_unpacked = qzeros_unpacked.flatten(1)
-        zeros = ((8 - qzeros_unpacked.float()) * scales.float()).to(scales.dtype)
-
-        qweight = torch._convert_weight_to_int4pack_for_cpu(qweight_unpacked, 1)
-        scales_zeros = torch.stack([scales, zeros], dim=-1)  # (K / group_size, N, 2)
-
-        layer.qweight = nn.Parameter(qweight, requires_grad=False)
+        qweight, scales_zeros = _autoawq_to_int4pack(
+            layer.qweight.data, layer.qzeros.data, layer.scales.data
+        )
         del layer.qzeros
         del layer.scales
+        layer.qweight = nn.Parameter(qweight, requires_grad=False)
         layer.scales_zeros = nn.Parameter(scales_zeros, requires_grad=False)
 
     def apply(
@@ -352,4 +333,73 @@ class AWQPTMoEMethod(FusedMoEMethodBase):
         set_weight_attrs(w2_qzeros, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        pass
+        w13_qweight, w13_scales_zeros = _autoawq_to_int4pack(
+            layer.w13_qweight.data, layer.w13_qzeros.data, layer.w13_scales.data
+        )
+        del layer.w13_qzeros
+        del layer.w13_scales
+        layer.w13_qweight = nn.Parameter(w13_qweight, requires_grad=False)
+        layer.w13_scales_zeros = nn.Parameter(w13_scales_zeros, requires_grad=False)
+
+        w2_qweight, w2_scales_zeros = _autoawq_to_int4pack(
+            layer.w2_qweight.data, layer.w2_qzeros.data, layer.w2_scales.data
+        )
+        del layer.w2_qzeros
+        del layer.w2_scales
+        layer.w2_qweight = nn.Parameter(w2_qweight, requires_grad=False)
+        layer.w2_scales_zeros = nn.Parameter(w2_scales_zeros, requires_grad=False)
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        router_logits: torch.Tensor,
+        top_k: int,
+        renormalize: bool,
+        use_grouped_topk: bool,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        custom_routing_function: Optional[Callable] = None,
+        correction_bias: Optional[torch.Tensor] = None,
+        activation: str = "silu",
+        inplace: bool = True,
+        no_combine: bool = False,
+    ):
+        raise
+
+
+def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
+    """Convert AutoAWQ weight format to PyTorch's int4pack
+
+    Args:
+        qweight: (*, K, N / 8), int32
+        qzeros: (*, K / group_size, N / 8), int32
+        scales: (*, K / group_size, 8), bfloat16
+    """
+    # https://github.com/casper-hansen/AutoAWQ/blob/23d584c2/awq/modules/triton/gemm.py#L73-L86
+    bitshifts = torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], dtype=torch.int32) * 4
+    qweight_unpacked = (qweight.unsqueeze(-1) >> bitshifts) & 0xF
+    qweight_unpacked = qweight_unpacked.flatten(-2).transpose(-1, -2).contiguous()
+
+    # PT int4pack_mm only supports zero_point in float domain, but AWQ uses integer domain.
+    # Hence, we need to convert zero_point to float domain.
+    # integer domain: w = (qweight - qzeros) * scales
+    #   float domain: w = qweight * scales + zeros - scales * 8
+    qzeros_unpacked = (qzeros.unsqueeze(-1) >> bitshifts) & 0xF
+    qzeros_unpacked = qzeros_unpacked.flatten(-2)
+    zeros = ((8 - qzeros_unpacked.float()) * scales.float()).to(scales.dtype)
+
+    if qweight_unpacked.ndim == 2:
+        qweight = torch._convert_weight_to_int4pack_for_cpu(qweight_unpacked, 1)
+    elif qweight_unpacked.ndim == 3:  # with experts
+        qweight = torch.stack(
+            [
+                torch._convert_weight_to_int4pack_for_cpu(qweight_unpacked[i], 1)
+                for i in range(qweight_unpacked.shape[0])
+            ],
+            dim=0,
+        )
+    else:
+        raise RuntimeError(f"Unsupported ndim={qweight_unpacked.ndim}")
+    scales_zeros = torch.stack([scales, zeros], dim=-1)  # (*, K / group_size, N, 2)
+    return qweight, scales_zeros
