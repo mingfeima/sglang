@@ -439,7 +439,7 @@ at::Tensor weight_packed_linear(at::Tensor& mat1, at::Tensor& mat2,
   const float* bias_data = nullptr;
   if (has_bias) {
     CHECK_EQ(bias.value().size(0), N);
-    bias_data = bias.value().to(at::kFloat).data_ptr<float>();
+    bias_data = bias.value().data_ptr<float>();
   }
 
   AT_DISPATCH_REDUCED_FLOATING_TYPES(mat1.scalar_type(), "weight_packed_linear_kernel_impl", [&] {
