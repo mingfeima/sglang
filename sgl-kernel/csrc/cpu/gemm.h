@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ATen/native/CPUBlas.h>
+#include <c10/core/ScalarType.h>
 
 // amx-bf16
 #define TILE_M 16
@@ -32,8 +33,13 @@ inline int64_t get_row_size<int8_t>(int64_t K) {
   return K + sizeof(int32_t);
 }
 
-inline int64_t get_row_size(int64_t K, bool use_int8_w8a8) {
-  return use_int8_w8a8 ? K + sizeof(int32_t) : K;
+template <>
+inline int64_t get_row_size<c10::Float8_e4m3fn>(int64_t K) {
+  return K + sizeof(int32_t);
+}
+
+inline int64_t get_row_size(int64_t K, bool use_int8_w8a8_or_fp8_w8a16) {
+  return use_int8_w8a8_or_fp8_w8a16 ? K + sizeof(int32_t) : K;
 }
 
 // pack weight to vnni format
@@ -76,6 +82,25 @@ void shared_expert_int8_kernel_impl(
     const scalar_t* __restrict__ input,
     const int8_t* __restrict__ packed_w1,
     const int8_t* __restrict__ packed_w2,
+    const float* __restrict__ w1s,
+    const float* __restrict__ w2s,
+    const scalar_t* __restrict__ fused_experts_out,
+    float routed_scaling_factor,
+    int64_t M,
+    int64_t N,
+    int64_t K);
+
+// shared expert implememntation for int8 w8a8
+template <typename scalar_t>
+void shared_expert_fp8_kernel_impl(
+    scalar_t* __restrict__ output,
+    scalar_t* __restrict__ ic1,
+    float* __restrict__ C_tmp,
+    scalar_t* __restrict__ Bdq_tmp,
+    float* __restrict__ Bs_tmp,
+    const scalar_t* __restrict__ input,
+    const at::Float8_e4m3fn* __restrict__ packed_w1,
+    const at::Float8_e4m3fn* __restrict__ packed_w2,
     const float* __restrict__ w1s,
     const float* __restrict__ w2s,
     const scalar_t* __restrict__ fused_experts_out,

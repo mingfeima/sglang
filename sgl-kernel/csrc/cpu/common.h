@@ -38,6 +38,10 @@ namespace {
         using packed_t = int8_t;                                                \
         return __VA_ARGS__();                                                   \
       }                                                                         \
+      case at::ScalarType::Float8_e4m3fn : {                                             \
+        using packed_t = at::Float8_e4m3fn;                                                \
+        return __VA_ARGS__();                                                   \
+      }                                                                         \
       default:                                                                  \
         TORCH_CHECK(false, "Unsupported floating data type.\n");                \
     }                                                                           \

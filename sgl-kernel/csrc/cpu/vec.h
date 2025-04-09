@@ -176,6 +176,16 @@ inline void quantize_row_int8<at::BFloat16>(uint8_t* __restrict__ Aq, float& As,
 }
 #endif
 
+template <typename scalar_t>
+inline void dequantize_row_fp8(scalar_t* __restrict__ Bdq, const float* __restrict__ Bs,
+    const at::Float8_e4m3fn* __restrict__ B, int64_t K) {
+
+  for (int64_t k = 0; k < K; ++k) {
+    float val = static_cast<float>(B[k]);
+    Bdq[k] = (scalar_t)(val * (*Bs));
+  }
+}
+
 // TODO: debug print, remove me later
 template<typename scalar_t>
 void print_array(scalar_t* ptr, int size) {
