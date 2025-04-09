@@ -154,7 +154,6 @@ class AWQPTLinearMethod(LinearMethodBase):
     def __init__(self, quant_config: AWQPTConfig):
         self.quant_config = quant_config
 
-    # create weight in AutoAWQ layout
     # vllm.model_executor.layers.quantization.awq.AWQLinearMethod
     def create_weights(
         self,
