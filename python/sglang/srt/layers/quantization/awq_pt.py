@@ -10,6 +10,7 @@ from sglang.srt.layers.moe.fused_moe_triton import (
     FusedMoEMethodBase,
     FusedMoeWeightScaleSupported,
 )
+from sglang.srt.layers.moe.topk import select_experts
 from sglang.srt.layers.parameter import GroupQuantScaleParameter, PackedvLLMParameter
 from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
@@ -365,7 +366,73 @@ class AWQPTMoEMethod(FusedMoEMethodBase):
         inplace: bool = True,
         no_combine: bool = False,
     ):
-        raise
+        from sgl_kernel.cpu import silu_and_mul
+
+        # Expert selection
+        topk_weights, topk_ids = select_experts(
+            hidden_states=x,
+            router_logits=router_logits,
+            use_grouped_topk=use_grouped_topk,
+            top_k=top_k,
+            renormalize=renormalize,
+            topk_group=topk_group,
+            num_expert_group=num_expert_group,
+            custom_routing_function=custom_routing_function,
+            correction_bias=correction_bias,
+        )
+
+        # Ref code from https://huggingface.co/deepseek-ai/DeepSeek-V2/blob/e0828e3cc0a03408724b80c3cc92c8e072db8d01/modeling_deepseek.py#L589
+        len_experts = layer.num_experts
+
+        cnts = topk_ids.new_zeros((topk_ids.shape[0], len_experts))
+        cnts.scatter_(1, topk_ids.to(torch.int64), 1)
+        tokens_per_expert = cnts.sum(dim=0)
+        idxs = topk_ids.view(-1).argsort()
+
+        sorted_tokens = x[idxs // topk_ids.shape[1]]
+        tokens_per_expert = tokens_per_expert.cpu().numpy()
+
+        if activation == "silu":
+            act = silu_and_mul
+        else:
+            raise ValueError(f"Unsupported activation: {activation=}")
+
+        outputs = []
+        start_idx = 0
+        for i, num_tokens in enumerate(tokens_per_expert):
+            end_idx = start_idx + num_tokens
+            if num_tokens == 0:
+                continue
+            tokens_for_this_expert = sorted_tokens[start_idx:end_idx]
+
+            gate_up = torch._weight_int4pack_mm_for_cpu(
+                tokens_for_this_expert,
+                layer.w13_qweight[i],
+                self.quant_config.group_size,
+                layer.w13_scales_zeros[i],
+            )
+            gate_up = act(gate_up)
+            expert_out = torch._weight_int4pack_mm_for_cpu(
+                gate_up,
+                layer.w2_qweight[i],
+                self.quant_config.group_size,
+                layer.w2_scales_zeros[i],
+            )
+            outputs.append(expert_out)
+            start_idx = end_idx
+
+        outs = torch.cat(outputs, dim=0) if len(outputs) else sorted_tokens.new_empty(0)
+        new_x = torch.empty_like(outs)
+
+        new_x[idxs] = outs
+        final_out = (
+            new_x.view(*topk_ids.shape, -1)
+            .type(topk_weights.dtype)
+            .mul_(topk_weights.unsqueeze(dim=-1))
+            .sum(dim=1)
+            .type(new_x.dtype)
+        )
+        return final_out
 
 
 def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
