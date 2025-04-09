@@ -389,7 +389,7 @@ class AWQPTMoEMethod(FusedMoEMethodBase):
         idxs = topk_ids.view(-1).argsort()
 
         sorted_tokens = x[idxs // topk_ids.shape[1]]
-        tokens_per_expert = tokens_per_expert.cpu().numpy()
+        tokens_per_expert = tokens_per_expert.tolist()
 
         if activation == "silu":
             act = silu_and_mul
@@ -440,7 +440,7 @@ def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
     Args:
         qweight: (*, K, N / 8), int32
         qzeros: (*, K / group_size, N / 8), int32
-        scales: (*, K / group_size, 8), bfloat16
+        scales: (*, K / group_size, N), bfloat16
     """
     # https://github.com/casper-hansen/AutoAWQ/blob/23d584c2/awq/modules/triton/gemm.py#L73-L86
     bitshifts = torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], dtype=torch.int32) * 4
