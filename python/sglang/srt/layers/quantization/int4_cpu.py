@@ -4,7 +4,11 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 from torch import Tensor, nn
 
-from sglang.srt.layers.linear import LinearBase, LinearMethodBase
+from sglang.srt.layers.linear import (
+    LinearBase,
+    LinearMethodBase,
+    UnquantizedLinearMethod,
+)
 from sglang.srt.layers.moe.fused_moe_triton import (
     FusedMoE,
     FusedMoEMethodBase,
@@ -16,7 +20,7 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
 )
-from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
+from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
 from sglang.srt.utils import set_weight_attrs
 
 logger = logging.getLogger(__name__)
@@ -82,17 +86,22 @@ class Int4CPUConfig(QuantizationConfig):
         layer: nn.Module,
         prefix: str,
     ) -> Optional["QuantizeMethodBase"]:
-        if any(name in prefix for name in self.modules_to_not_convert):
-            return None
+        not_convert = any(name in prefix for name in self.modules_to_not_convert)
 
         if isinstance(layer, LinearBase):
-            return Int4CPULinearMethod(self)
+            return (
+                Int4CPULinearMethod(self)
+                if not not_convert
+                else UnquantizedLinearMethod()
+            )
+        elif isinstance(layer, ParallelLMHead):
+            return (
+                Int4CPULinearMethod(self)
+                if self.lm_head_quantized and not not_convert
+                else UnquantizedLinearMethod()
+            )
         elif isinstance(layer, FusedMoE):
             return Int4CPUMoEMethod(self)
-        elif isinstance(layer, VocabParallelEmbedding):
-            if not self.lm_head_quantized:
-                return None
-            return Int4CPULinearMethod(self)
 
         return None
 
