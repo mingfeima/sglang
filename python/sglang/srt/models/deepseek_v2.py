@@ -638,7 +638,10 @@ class DeepseekV2AttentionMLA(nn.Module):
 
         self.qkv_proj_with_rope_is_int8 = None
         if self.q_lora_rank is not None:
-            if self.q_a_proj.weight.dtype == torch.int8:
+            if (
+                hasattr(self.q_a_proj, "weight")
+                and self.q_a_proj.weight.dtype == torch.int8
+            ):
                 assert (
                     self.q_a_proj.weight.dtype
                     == self.q_b_proj.weight.dtype
