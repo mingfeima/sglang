@@ -1268,15 +1268,12 @@ class DeepseekV2Model(nn.Module):
         return hidden_states
 
 
-def _awq_dequantize(qweight, scales, qzeros):
-    from vllm import _custom_ops as ops
+def _awq_dequantize(qweight: torch.Tensor, scales: torch.Tensor, qzeros: torch.Tensor):
+    if qweight.is_cuda:
+        from vllm import _custom_ops as ops
 
-    try:
         # on CPU, this is not available
         return ops.awq_dequantize(qweight, scales, qzeros, 0, 0, 0)
-
-    except:
-        pass
 
     # qweight: (K, N / 8), int32
     # qzeros: (K / group_size, N / 8), int32
