@@ -435,6 +435,20 @@ class DeepseekV2Attention(nn.Module):
         return output
 
 
+class MParams:
+    def __init__(self):
+        self.q_lora_rank: Optional[int] = None
+        self.q_a_proj: Optional[nn.Module] = None
+        self.q_b_proj: Optional[nn.Module] = None
+        self.kv_a_proj_with_mqa: Optional[nn.Module] = None
+        self.q_a_layernorm: Optional[nn.Module] = None
+        self.kv_a_layernorm: Optional[nn.Module] = None
+        self.rotary_emb: Optional[nn.Module] = None
+        self.qkv_proj_with_rope_is_int8: Optional[bool] = None
+        self.num_local_heads: Optional[int] = None
+        self.kv_lora_rank: Optional[int] = None
+
+
 class DeepseekV2AttentionMLA(nn.Module):
 
     def __init__(
@@ -622,6 +636,20 @@ class DeepseekV2AttentionMLA(nn.Module):
                     == self.kv_a_proj_with_mqa.weight.dtype
                 )
                 self.qkv_proj_with_rope_is_int8 = True
+
+        params = MParams()
+        params.q_lora_rank = self.q_lora_rank
+        if params.q_lora_rank is not None:
+            params.q_a_proj = self.q_a_proj
+            params.q_b_proj = self.q_b_proj
+            params.q_a_layernorm = self.q_a_layernorm
+        params.kv_a_proj_with_mqa = self.kv_a_proj_with_mqa
+        params.kv_a_layernorm = self.kv_a_layernorm
+        params.rotary_emb = self.rotary_emb
+        params.qkv_proj_with_rope_is_int8 = self.qkv_proj_with_rope_is_int8
+        params.num_local_heads = self.num_local_heads
+        params.kv_lora_rank = self.kv_lora_rank
+        self.params = params
 
     def forward(
         self,
@@ -966,61 +994,64 @@ class DeepseekV2AttentionMLA(nn.Module):
         hidden_states: torch.Tensor,
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
+        params = self.params
         assert (
-            self.q_lora_rank is not None and self.use_intel_amx_backend
+            params.q_lora_rank is not None and self.use_intel_amx_backend
         ), "forward_absorb_fused_mla_rope_cpu requires q_lora_rank is not None and use_intel_amx_backend"
         q_input, k_input, v_input = sgl_kernel.cpu.qkv_proj_with_rope(
             hidden_states,
-            self.q_a_proj.weight,
-            self.q_b_proj.weight,
-            self.kv_a_proj_with_mqa.weight,
+            params.q_a_proj.weight,
+            params.q_b_proj.weight,
+            params.kv_a_proj_with_mqa.weight,
             self.w_kc,
-            self.q_a_layernorm.weight,
-            self.kv_a_layernorm.weight,
+            params.q_a_layernorm.weight,
+            params.kv_a_layernorm.weight,
             positions,
-            self.rotary_emb.cos_sin_cache,
-            self.kv_a_layernorm.variance_epsilon,
-            use_int8_w8a8=self.qkv_proj_with_rope_is_int8,
+            params.rotary_emb.cos_sin_cache,
+            params.kv_a_layernorm.variance_epsilon,
+            use_int8_w8a8=params.qkv_proj_with_rope_is_int8,
             q_a_proj_scale=(
-                self.q_a_proj.weight_scale if self.qkv_proj_with_rope_is_int8 else None
+                params.q_a_proj.weight_scale if params.qkv_proj_with_rope_is_int8 else None
             ),
             q_b_proj_scale=(
-                self.q_b_proj.weight_scale if self.qkv_proj_with_rope_is_int8 else None
+                params.q_b_proj.weight_scale if params.qkv_proj_with_rope_is_int8 else None
             ),
             kv_a_proj_scale=(
-                self.kv_a_proj_with_mqa.weight_scale
-                if self.qkv_proj_with_rope_is_int8
+                params.kv_a_proj_with_mqa.weight_scale
+                if params.qkv_proj_with_rope_is_int8
                 else None
             ),
         )
         attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)
-        attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
+        attn_output = attn_output.view(-1, params.num_local_heads, params.kv_lora_rank)
 
-        if self.w_vc.dtype == torch.float8_e4m3fnuz:
+        w_vc = self.w_vc
+        w_scale = self.w_scale
+        if w_vc.dtype == torch.float8_e4m3fnuz:
             # TODO(kernel): add bmm_fp8 for torch.float8_e4m3fnuz
             attn_bmm_output = torch.bmm(
                 attn_output.to(torch.bfloat16).transpose(0, 1),
-                self.w_vc.to(torch.bfloat16) * self.w_scale,
+                w_vc.to(torch.bfloat16) * w_scale,
             )
-        elif self.w_vc.dtype == torch.float8_e4m3fn:
+        elif w_vc.dtype == torch.float8_e4m3fn:
             attn_output_val, attn_output_scale = input_to_float8(
                 attn_output.transpose(0, 1), torch.float8_e4m3fn
             )
             attn_bmm_output = bmm_fp8(
                 attn_output_val,
-                self.w_vc,
+                w_vc,
                 attn_output_scale,
-                self.w_scale,
+                w_scale,
                 torch.bfloat16,
             )
         else:
             # See [Note] Align shapes of bmm inputs.
-            B = self.w_vc.size(0)
-            N = self.w_vc.size(1)
+            B = w_vc.size(0)
+            N = w_vc.size(1)
             M = attn_output.size(0)
             output = torch.empty([M, int(B * N)], dtype=attn_output.dtype)
             attn_bmm_output = output.view([M, B, N]).transpose_(0, 1)
-            sgl_kernel.cpu.bmm(attn_bmm_output, attn_output.transpose(0, 1), self.w_vc)
+            sgl_kernel.cpu.bmm(attn_bmm_output, attn_output.transpose(0, 1), w_vc)
             attn_output = output
         output, _ = self.o_proj(attn_output)
 
