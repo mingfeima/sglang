@@ -100,9 +100,7 @@ class BenchArgs:
         parser.add_argument(
             "--output-len", type=int, nargs="+", default=BenchArgs.output_len
         )
-        parser.add_argument(
-            "--prompt-filename", type=str, default=""
-        )
+        parser.add_argument("--prompt-filename", type=str, default="")
         parser.add_argument(
             "--result-filename", type=str, default=BenchArgs.result_filename
         )
@@ -207,7 +205,11 @@ def prepare_extend_inputs_for_correctness_test(
 
 
 def prepare_synthetic_inputs_for_latency_test(batch_size, input_len, custom_inputs=[]):
-    input_ids = custom_inputs if len(custom_inputs) > 0 else np.ones((batch_size, input_len), dtype=np.int32)
+    input_ids = (
+        custom_inputs
+        if len(custom_inputs) > 0
+        else np.ones((batch_size, input_len), dtype=np.int32)
+    )
     sampling_params = SamplingParams(
         temperature=0,
         max_new_tokens=BenchArgs.output_len,
@@ -365,7 +367,11 @@ def latency_test_run_once(
         parent_dir = os.path.dirname(os.path.abspath(profile_filename))
         os.makedirs(parent_dir, exist_ok=True)
         profiler.export_chrome_trace(profile_filename)
-        print(profiler.key_averages(group_by_input_shape=True).table(sort_by="self_cpu_time_total"))
+        print(
+            profiler.key_averages(group_by_input_shape=True).table(
+                sort_by="self_cpu_time_total"
+            )
+        )
         rank_print(f"torch profiler chrome trace saved to {profile_filename}")
 
     prefill_latency = time.time() - tic
@@ -410,7 +416,11 @@ def latency_test_run_once(
             parent_dir = os.path.dirname(os.path.abspath(profile_filename))
             os.makedirs(parent_dir, exist_ok=True)
             profiler.export_chrome_trace(profile_filename)
-            print(profiler.key_averages(group_by_input_shape=True).table(sort_by="self_cpu_time_total"))
+            print(
+                profiler.key_averages(group_by_input_shape=True).table(
+                    sort_by="self_cpu_time_total"
+                )
+            )
             rank_print(f"torch profiler chrome trace saved to {profile_filename}")
 
     # Record decode timing from 2nd output
@@ -475,11 +485,13 @@ def latency_test(
     custom_prompts = list()
     if bench_args.prompt_filename != "":
         if not os.path.exists(bench_args.prompt_filename):
-            rank_print(f"Customer prompt file {bench_args.prompt_filename} does not exist. Using dummy data...")
+            rank_print(
+                f"Customer prompt file {bench_args.prompt_filename} does not exist. Using dummy data..."
+            )
         else:
-            with open(bench_args.prompt_filename, 'r') as pf:
+            with open(bench_args.prompt_filename, "r") as pf:
                 prompt_pool = json.load(pf)
-                prompt_dict = prompt_pool['deepseekr1'][str(bench_args.input_len[0])]
+                prompt_dict = prompt_pool["deepseekr1"][str(bench_args.input_len[0])]
                 for index in range(bench_args.batch_size[0]):
                     custom_prompts.append(prompt_dict[str(index)])
 

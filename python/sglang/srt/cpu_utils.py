@@ -23,9 +23,7 @@ def update_intermediate_size(model_config, attr_name, intermediate_padding_size)
     if hasattr(model_config.hf_config, attr_name):
         attr_value = getattr(model_config.hf_config, attr_name)
         if attr_value % intermediate_padding_size != 0:
-            attr_value = pad_vocab_size(
-                attr_value, intermediate_padding_size
-            )
+            attr_value = pad_vocab_size(attr_value, intermediate_padding_size)
             setattr(model_config.hf_config, attr_name, attr_value)
             setattr(model_config.hf_text_config, attr_name, attr_value)
     return model_config
@@ -49,8 +47,12 @@ def update_config(model_config: ModelConfig, tp_size: int) -> ModelConfig:
         model_config.hf_text_config.num_attention_heads = num_attention_heads
 
     intermediate_padding_size = tp_size * DEFAULT_MOE_PADDING_SIZE
-    model_config = update_intermediate_size(model_config, "moe_intermediate_size", intermediate_padding_size)
-    model_config = update_intermediate_size(model_config, "intermediate_size", intermediate_padding_size)
+    model_config = update_intermediate_size(
+        model_config, "moe_intermediate_size", intermediate_padding_size
+    )
+    model_config = update_intermediate_size(
+        model_config, "intermediate_size", intermediate_padding_size
+    )
 
     return model_config
 

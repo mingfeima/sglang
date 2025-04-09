@@ -140,7 +140,9 @@ class MoEGate(nn.Module):
 
     def forward(self, hidden_states):
         if self.use_intel_amx_backend:
-            return self.sgl_kernel_cpu_weight_packed_linear(hidden_states, self.weight, None)
+            return self.sgl_kernel_cpu_weight_packed_linear(
+                hidden_states, self.weight, None
+            )
 
         logits = F.linear(hidden_states, self.weight, None)
         return logits
@@ -216,7 +218,6 @@ class DeepseekV2MoE(nn.Module):
                 assert self.shared_experts_down_proj.weight.dtype == torch.int8
                 self.shared_experts_is_int8 = True
 
-
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
@@ -237,13 +238,8 @@ class DeepseekV2MoE(nn.Module):
         shared_experts_is_int8 = self.shared_experts_is_int8
         has_shared_experts = self.n_shared_experts is not None
 
-        assert (
-            use_intel_amx_backend
-            == down_proj.use_intel_amx_backend
-        )
-        if (
-            has_shared_experts and use_intel_amx_backend
-        ):
+        assert use_intel_amx_backend == down_proj.use_intel_amx_backend
+        if has_shared_experts and use_intel_amx_backend:
             # [Note] inplace should be False in fused_experts.
             # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
             # While hidden_states is still needed in shared_expert.
@@ -1011,10 +1007,14 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.kv_a_layernorm.variance_epsilon,
             use_int8_w8a8=params.qkv_proj_with_rope_is_int8,
             q_a_proj_scale=(
-                params.q_a_proj.weight_scale if params.qkv_proj_with_rope_is_int8 else None
+                params.q_a_proj.weight_scale
+                if params.qkv_proj_with_rope_is_int8
+                else None
             ),
             q_b_proj_scale=(
-                params.q_b_proj.weight_scale if params.qkv_proj_with_rope_is_int8 else None
+                params.q_b_proj.weight_scale
+                if params.qkv_proj_with_rope_is_int8
+                else None
             ),
             kv_a_proj_scale=(
                 params.kv_a_proj_with_mqa.weight_scale

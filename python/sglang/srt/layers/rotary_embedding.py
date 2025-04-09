@@ -16,8 +16,10 @@ if _is_cuda_available:
     from sgl_kernel import apply_rope_with_cos_sin_cache_inplace
 
 from sglang.srt.cpu_utils import cpu_has_amx_support
+
 if cpu_has_amx_support():
     import sgl_kernel.cpu
+
 
 def _rotate_neox(x: torch.Tensor) -> torch.Tensor:
     x1 = x[..., : x.shape[-1] // 2]
@@ -727,7 +729,8 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         # TODO: Add scenario of self.rotary_dim < self.head_size
         if positions.device == torch.device("cpu") and cpu_has_amx_support():
             return sgl_kernel.cpu.rotary_position_embedding(
-                positions, query, key, self.cos_sin_cache)
+                positions, query, key, self.cos_sin_cache
+            )
         else:
             self.cos_sin_cache: torch.Tensor = self.cos_sin_cache.to(positions.device)
             query_rot = query[..., : self.rotary_dim]

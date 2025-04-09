@@ -27,6 +27,7 @@ if is_cuda_available():
     from sgl_kernel import gelu_and_mul, gelu_tanh_and_mul, silu_and_mul
 
 from sglang.srt.cpu_utils import cpu_has_amx_support
+
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
@@ -59,6 +60,7 @@ class SiluAndMul(CustomOp):
             return sgl_kernel.cpu.silu_and_mul(x)
         else:
             return self.forward_native(x)
+
 
 class GeluAndMul(CustomOp):
     def __init__(self, approximate="tanh"):

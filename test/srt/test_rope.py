@@ -1,8 +1,9 @@
 import unittest
-import expecttest
 
-import torch
+import expecttest
 import sgl_kernel.cpu
+import torch
+
 
 class TestROPE(expecttest.TestCase):
     def test_deepseek_v2_rope(self):
@@ -76,7 +77,9 @@ class TestROPE(expecttest.TestCase):
                 k = torch.randn(seq_len, 1, k_dim, dtype=dtype)
                 k_clone = k.clone()
                 _, q_pe = q.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
-                _, q_pe_clone = q_clone.split([qk_nope_head_dim, qk_rope_head_dim], dim=-1)
+                _, q_pe_clone = q_clone.split(
+                    [qk_nope_head_dim, qk_rope_head_dim], dim=-1
+                )
                 k_pe = k[:, :, k_dim - qk_rope_head_dim :]
                 k_pe_clone = k_clone[:, :, k_dim - qk_rope_head_dim :]
 

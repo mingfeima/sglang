@@ -30,6 +30,7 @@ if is_cuda_available():
     )
 
 from sglang.srt.cpu_utils import cpu_has_amx_support
+
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 

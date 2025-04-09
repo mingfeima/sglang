@@ -30,9 +30,7 @@ def tensor_model_parallel_all_gather(
         from sglang.srt.distributed import get_tp_group
 
         shm_comm_op = get_tp_group().shm_comm_op
-        return shm_comm_op.shm_allgather(
-            input_, get_tp_group().device_group, dim
-        )
+        return shm_comm_op.shm_allgather(input_, get_tp_group().device_group, dim)
     return get_tp_group().all_gather(input_, dim)
 
 
