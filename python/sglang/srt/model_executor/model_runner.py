@@ -28,7 +28,7 @@ import torch.distributed as dist
 from sglang.srt.configs.device_config import DeviceConfig
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.configs.model_config import AttentionArch, ModelConfig
-from sglang.srt.cpu_utils import cpu_has_amx_support, update_config
+from sglang.srt.cpu_utils import cpu_has_avx512_bf16_support, update_config
 from sglang.srt.distributed import (
     get_tp_group,
     init_distributed_environment,
@@ -225,7 +225,7 @@ class ModelRunner:
         if (
             server_args.attention_backend == "intel_amx"
             and server_args.device == "cpu"
-            and not cpu_has_amx_support()
+            and not cpu_has_avx512_bf16_support()
         ):
             logger.info(
                 "The current platform does not support Intel AMX, will fallback to torch_native backend."

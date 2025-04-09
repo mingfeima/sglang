@@ -73,6 +73,10 @@ def cpu_has_amx_support():
     return torch._C._cpu._is_amx_tile_supported() and is_intel_amx_backend_available
 
 
+def cpu_has_avx512_bf16_support():
+    return torch._C._cpu._is_avx512_bf16_supported()
+
+
 def prepack_weight_if_needed(weight):
     if weight.device != torch.device("cpu"):
         return weight
