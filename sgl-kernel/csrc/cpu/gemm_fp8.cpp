@@ -328,10 +328,6 @@ at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& sca
   int64_t mat1_strideM = mat1.stride(0);
   int64_t out_strideM = out.stride(0);
 
-  // TODO: seems the current code already supports it?
-//   TORCH_CHECK(N % block_size_N == 0, "unsupported block_size_N");
-//   TORCH_CHECK(K % block_size_K == 0, "unsupported block_size_K");
-
   const bool has_bias = bias.has_value();
   const float* bias_data = nullptr;
   if (has_bias) {
