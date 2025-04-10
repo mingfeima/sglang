@@ -22,7 +22,7 @@ namespace {
     }                                                                            \
   }()
 
-// dispatch: bfloat16, float16, int8_t
+// dispatch: bfloat16, float16, int8_t, fp8_e4m3
 #define CPU_DISPATCH_PACKED_TYPES(TYPE, ...)                                    \
   [&] {                                                                         \
     switch (TYPE) {                                                             \
@@ -38,11 +38,40 @@ namespace {
         using packed_t = int8_t;                                                \
         return __VA_ARGS__();                                                   \
       }                                                                         \
+      case at::ScalarType::Float8_e4m3fn : {                                    \
+        using packed_t = at::Float8_e4m3fn;                                     \
+        return __VA_ARGS__();                                                   \
+      }                                                                         \      
       default:                                                                  \
         TORCH_CHECK(false, "Unsupported floating data type.\n");                \
     }                                                                           \
   }()
 
+#define CPU_DISPATCH_PACKED_FLOAT_TYPES(TYPE1, TYPE2, ...)                      \
+  [&] {                                                                         \
+    switch (TYPE2) {                                                            \
+      case at::ScalarType::Float8_e4m3fn : {                                    \
+        TORCH_CHECK(TYPE1 == at::kBFloat16);                                    \
+        using scalar_t = at::BFloat16;                                          \
+        using packed_t = at::Float8_e4m3fn;                                     \
+        return __VA_ARGS__();                                                   \
+      }                                                                         \
+      case at::ScalarType::BFloat16 : {                                         \
+        TORCH_CHECK(TYPE1 == at::kBFloat16);                                    \
+        using scalar_t = at::BFloat16;                                          \
+        using packed_t = at::BFloat16;                                          \
+        return __VA_ARGS__();                                                   \
+      }                                                                         \
+      case at::ScalarType::Half: {                                              \
+        TORCH_CHECK(TYPE1 == at::kHalf);                                        \
+        using scalar_t = at::Half;                                              \
+        using packed_t = at::Half;                                              \
+        return __VA_ARGS__();                                                   \
+      }                                                                         \
+      default:                                                                  \
+        TORCH_CHECK(false, "Unsupported floating data type for weight.\n");     \
+    }                                                                           \
+  }()
 
 #define UNUSED(x) (void)(x)
 
