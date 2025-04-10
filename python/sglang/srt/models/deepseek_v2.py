@@ -632,9 +632,13 @@ class DeepseekV2AttentionMLA(nn.Module):
         self.w_vc = None
         self.w_scale = None
 
-        self.quant_method = PackWeightMethod(
-            weight_names=["w_kc", "w_vc"], transpose_dims=[[1, 2], [1, 2]]
-        )
+        if cpu_has_amx_support():
+            self.quant_method = PackWeightMethod(
+                weight_names=["w_kc", "w_vc"], transpose_dims=[[1, 2], [1, 2]]
+            )
+        else:
+            self.quant_method = None
+            self.use_intel_amx_backend = False
 
         self.qkv_proj_with_rope_is_int8 = None
         if self.q_lora_rank is not None:
