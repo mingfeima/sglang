@@ -246,13 +246,11 @@ class DeepseekV2MoE(nn.Module):
         # Use cached attributes instead of dynamic access
         gate_up_proj = self.shared_experts_gate_up_proj
         down_proj = self.shared_experts_down_proj
-        use_intel_amx_backend = getattr(gate_up_proj, "use_intel_amx_backend", False)
+        use_intel_amx_backend = gate_up_proj.use_intel_amx_backend
         shared_experts_is_int8 = self.shared_experts_is_int8
         has_shared_experts = self.n_shared_experts is not None
 
-        assert use_intel_amx_backend == getattr(
-            down_proj, "use_intel_amx_backend", False
-        )
+        assert use_intel_amx_backend == down_proj.use_intel_amx_backend
         if has_shared_experts and use_intel_amx_backend:
             # [Note] inplace should be False in fused_experts.
             # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
@@ -643,6 +641,7 @@ class DeepseekV2AttentionMLA(nn.Module):
 
         self.qkv_proj_with_rope_is_int8 = None
         if self.q_lora_rank is not None:
+            # quantized models might not have .weight
             if (
                 hasattr(self.q_a_proj, "weight")
                 and self.q_a_proj.weight.dtype == torch.int8

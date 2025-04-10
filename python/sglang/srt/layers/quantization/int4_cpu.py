@@ -234,6 +234,8 @@ class Int4CPULinearMethod(LinearMethodBase):
         layer.qweight = nn.Parameter(qweight, requires_grad=False)
         layer.scales_zeros = nn.Parameter(scales_zeros, requires_grad=False)
 
+        layer.use_intel_amx_backend = False
+
     def apply(
         self,
         layer: nn.Module,
@@ -357,6 +359,8 @@ class Int4CPUMoEMethod(FusedMoEMethodBase):
         del layer.w2_scales
         layer.w2_qweight = nn.Parameter(w2_qweight, requires_grad=False)
         layer.w2_scales_zeros = nn.Parameter(w2_scales_zeros, requires_grad=False)
+
+        layer.use_intel_amx_backend = False
 
     def apply(
         self,
