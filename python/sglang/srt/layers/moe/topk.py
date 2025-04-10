@@ -17,8 +17,9 @@ from typing import Callable, Optional
 import torch
 import torch.nn.functional as F
 
-from sglang.srt.utils import get_compiler_backend
 from sglang.srt.cpu_utils import cpu_has_amx_support
+from sglang.srt.utils import get_compiler_backend
+
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 

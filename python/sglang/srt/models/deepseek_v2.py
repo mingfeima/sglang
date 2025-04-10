@@ -146,7 +146,9 @@ class MoEGate(nn.Module):
 
     def forward(self, hidden_states):
         if self.use_intel_amx_backend:
-            return self.sgl_kernel_cpu_weight_packed_linear(hidden_states, self.weight, None)
+            return self.sgl_kernel_cpu_weight_packed_linear(
+                hidden_states, self.weight, None
+            )
 
         logits = F.linear(hidden_states, self.weight, None)
         return logits
@@ -227,7 +229,6 @@ class DeepseekV2MoE(nn.Module):
             ):
                 assert self.shared_experts_down_proj.weight.dtype == torch.int8
                 self.shared_experts_is_int8 = True
-
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
@@ -1027,10 +1028,14 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.kv_a_layernorm.variance_epsilon,
             use_int8_w8a8=params.qkv_proj_with_rope_is_int8,
             q_a_proj_scale=(
-                params.q_a_proj.weight_scale if params.qkv_proj_with_rope_is_int8 else None
+                params.q_a_proj.weight_scale
+                if params.qkv_proj_with_rope_is_int8
+                else None
             ),
             q_b_proj_scale=(
-                params.q_b_proj.weight_scale if params.qkv_proj_with_rope_is_int8 else None
+                params.q_b_proj.weight_scale
+                if params.qkv_proj_with_rope_is_int8
+                else None
             ),
             kv_a_proj_scale=(
                 params.kv_a_proj_with_mqa.weight_scale

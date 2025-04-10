@@ -238,7 +238,7 @@ void int8_scaled_mm_kernel_impl(
         // move to the next index
         data_index_step(mb, MB, nb, NB);
       }
- 
+
       if (use_brgemm) {
         at::native::cpublas::brgemm_release();
       }

@@ -68,7 +68,7 @@ def moe_forward_native(
     correction_bias: Optional[torch.Tensor] = None,
     activation: str = "silu",
     inplace: bool = True,
-    no_combine: bool = False,    
+    no_combine: bool = False,
 ) -> torch.Tensor:
 
     topk_weights, topk_ids = select_experts(
