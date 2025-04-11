@@ -101,8 +101,7 @@ struct brgemm {
       int K,
       int lda,
       int ldb,
-      int ldc,
-      int64_t blocks_k_per_group) {
+      int ldc) {
     TORCH_CHECK(false, "struct brgemm: primary template not implemented!");
   }  
 };
@@ -122,8 +121,7 @@ struct brgemm<scalar_t, scalar_t, has_bias> {
       int K,
       int lda,
       int ldb,
-      int ldc,
-      int64_t blocks_k_per_group) {
+      int ldc) {
     UNUSED(scale);
 
     constexpr int BLOCK_N = block_size_n();
@@ -156,18 +154,19 @@ struct brgemm<at::BFloat16, at::Float8_e4m3fn, has_bias> {
       int K,
       int lda,
       int ldb,
-      int ldc,
-      int64_t blocks_k_per_group) {
+      int ldc) {
     constexpr int BLOCK_N = block_size_n();
 
     // [BLOCK_K, BLOCK_N] -> [BLOCK_K / 2, BLOCK_N * 2]
     const int ldb_tmp = block_size_n();
 
+    static_assert(BLOCK_K == 128);
+
     // accumulate across K per BLOCK_K
     for (int k = 0; k < K; k += BLOCK_K) {
       int kb_size = std::min(BLOCK_K, K - k);
 
-      int idx = (k / BLOCK_K) / blocks_k_per_group;
+      int idx = k >> 7; // k / BLOCK_K where BLOCK_K = 128
       unpack_B(Btmp, B + k * ldb, N, kb_size, ldb, ldb_tmp, scale[idx]);
 
       const bool add_C = (k != 0);
@@ -202,12 +201,11 @@ void tinygemm_kernel(
     int64_t ldb,
     int64_t ldc,
     bool brg,
-    int64_t blocks_k_per_group,
     int64_t block_size_K) {
 
   if (brg) {
     brgemm<scalar_t, at::Float8_e4m3fn, has_bias>::apply(
-        A, B, C, Btmp, Ctmp, bias, scale, M, N, K, lda, ldb, ldc, blocks_k_per_group);
+        A, B, C, Btmp, Ctmp, bias, scale, M, N, K, lda, ldb, ldc);
     return;
   }
 
@@ -239,7 +237,6 @@ void fp8_scaled_mm_kernel_impl(
   const int64_t scale_size_K = div_up(K, block_size_K);
 
   const int64_t blocks_n_per_group = block_size_N / BLOCK_N;
-  const int64_t blocks_k_per_group = block_size_K / BLOCK_K;
 
   // TODO: add the support for use_brgemm = false;
   // use avx512-bf16 when a) M is small; b) dtype is bfloat16, otherwise use amx
@@ -266,22 +263,21 @@ void fp8_scaled_mm_kernel_impl(
         int64_t nb_size = std::min(N - nb_start, BLOCK_N);
 
         tinygemm_kernel<scalar_t, has_bias>(
-            /*   A                  */ mat1 + mb_start * mat1_strideM,
-            /*   B                  */ mat2 + nb_start * K, // nb * BLOCK_N * K
-            /*   C                  */ out + mb_start * out_strideM + nb_start,
-            /*   Btmp               */ Btmp,
-            /*   Ctmp               */ Ctmp,
-            /*   scale              */ scale_ptr,
-            /*   bias               */ bias + nb_start,
-            /*   M                  */ mb_size,
-            /*   N                  */ nb_size,
-            /*   K                  */ K,
-            /*   lda                */ mat1_strideM,
-            /*   ldb                */ nb_size,
-            /*   ldc                */ out_strideM,
-            /*   brg                */ use_brgemm,
-            /*   blocks_k_per_group */ blocks_k_per_group,
-            /*   block_size_K       */ block_size_K);
+            /*   A            */ mat1 + mb_start * mat1_strideM,
+            /*   B            */ mat2 + nb_start * K, // nb * BLOCK_N * K
+            /*   C            */ out + mb_start * out_strideM + nb_start,
+            /*   Btmp         */ Btmp,
+            /*   Ctmp         */ Ctmp,
+            /*   scale        */ scale_ptr,
+            /*   bias         */ bias + nb_start,
+            /*   M            */ mb_size,
+            /*   N            */ nb_size,
+            /*   K            */ K,
+            /*   lda          */ mat1_strideM,
+            /*   ldb          */ nb_size,
+            /*   ldc          */ out_strideM,
+            /*   brg          */ use_brgemm,
+            /*   block_size_K */ block_size_K);
 
         // move to the next index
         data_index_step(mb, MB, nb, NB);
