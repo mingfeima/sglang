@@ -57,6 +57,7 @@ WEIGHT_LOADER_V2_SUPPORTED = [
     "FBGEMMFp8LinearMethod",
     "ModelOptFp8LinearMethod",
     "IPEXAWQLinearMethod",
+    "Int4CPULinearMethod",
 ]
 
 

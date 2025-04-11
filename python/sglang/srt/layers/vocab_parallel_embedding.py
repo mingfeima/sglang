@@ -50,6 +50,11 @@ class UnquantizedEmbeddingMethod(QuantizeMethodBase):
         layer.register_parameter("weight", weight)
         set_weight_attrs(weight, extra_weight_attrs)
 
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        # When tie_word_embeddings=True, Embedding layer can be used as LM head.
+        # Hence, we need to create this attribute to avoid missing attribute error.
+        layer.use_intel_amx_backend = False
+
     def apply(
         self,
         layer: torch.nn.Module,
