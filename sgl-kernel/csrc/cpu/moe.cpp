@@ -1116,6 +1116,7 @@ at::Tensor shared_expert_cpu(
     double routed_scaling_factor,
     bool inplace,
     bool use_int8_w8a8,
+    bool use_fp8_w8a16,
     std::optional<at::Tensor>& w1_scale,
     std::optional<at::Tensor>& w2_scale,
     std::optional<at::Tensor>& a1_scale,
@@ -1146,8 +1147,8 @@ at::Tensor shared_expert_cpu(
   int64_t N = w1.size(0) / 2;
 
   // we use int32_t compensation for int8 w8a8
-  int64_t packed_K = get_row_size(K, use_int8_w8a8);
-  int64_t packed_N = get_row_size(N, use_int8_w8a8);
+  int64_t packed_K = get_row_size(K, use_int8_w8a8 || use_fp8_w8a16);
+  int64_t packed_N = get_row_size(N, use_int8_w8a8 || use_fp8_w8a16);
 
   // check weight shapes
   CHECK_EQ(w2.size(0), K);
@@ -1160,6 +1161,10 @@ at::Tensor shared_expert_cpu(
     TORCH_CHECK(!a1_scale.has_value(), "static quantization for activation not supported.");
     TORCH_CHECK(!a2_scale.has_value(), "static quantization for activation not supported.");
   }
+  if (use_fp8_w8a16) {
+    TORCH_CHECK(w1_scale.has_value(), "missing w1_scale for fp8 w8a16.");
+    TORCH_CHECK(w2_scale.has_value(), "missing w2_scale for fp8 w8a16.");
+  }
 
   at::Tensor out_hidden_states = inplace ? hidden_states : at::empty_like(hidden_states);
 
@@ -1171,11 +1176,17 @@ at::Tensor shared_expert_cpu(
   //   3. Aq_tmp : [M, K] or [M, N]
   //   4. As_tmp : [M]
   //
+  // for fp8 w8a16:
+  //   3. Bdq_tmp : [2N, K] or [K, N]
+  //   4. Bs_tmp :  [2N] o [K]
   int num_threads = at::get_num_threads();
   int64_t buffer_size_nbytes = M * N * 2 + num_threads * 2 * BLOCK_M * BLOCK_N * sizeof(float);
 
   if (use_int8_w8a8) {
     buffer_size_nbytes += std::max(M * K, M * N) + M * sizeof(float);
+  }
+  if (use_fp8_w8a16) {
+    buffer_size_nbytes += std::max(2 * N * K, K * N) * 2 + std::max(2 * N, K) * sizeof(float);
   }
 
   auto buffer = at::empty({buffer_size_nbytes}, hidden_states.options().dtype(at::kChar));
@@ -1201,6 +1212,31 @@ at::Tensor shared_expert_cpu(
           hidden_states.data_ptr<scalar_t>(),
           packed_w1.data_ptr<int8_t>(),
           packed_w2.data_ptr<int8_t>(),
+          w1s.data_ptr<float>(),
+          w2s.data_ptr<float>(),
+          fused_experts_out.data_ptr<scalar_t>(),
+          routed_scaling_factor,
+          M,
+          N,
+          K);
+    } else if (use_fp8_w8a16) {
+      scalar_t* __restrict__ Bdq_tmp = (scalar_t*)((void*)(C_tmp + num_threads * 2 * BLOCK_M * BLOCK_N));
+      float* __restrict__ Bs_tmp = (float*)((void*)(Bdq_tmp + std::max(2 * N * K, K * N)));
+
+      auto w1s = w1_scale.value();
+      auto w2s = w2_scale.value();
+      TORCH_CHECK(w1s.numel() == 2 * N);
+      TORCH_CHECK(w2s.numel() == K);
+
+      shared_expert_fp8_kernel_impl<scalar_t>(
+          out_hidden_states.data_ptr<scalar_t>(),
+          intermediate_cache1,
+          C_tmp,
+          Bdq_tmp,
+          Bs_tmp,
+          hidden_states.data_ptr<scalar_t>(),
+          packed_w1.data_ptr<at::Float8_e4m3fn>(),
+          packed_w2.data_ptr<at::Float8_e4m3fn>(),
           w1s.data_ptr<float>(),
           w2s.data_ptr<float>(),
           fused_experts_out.data_ptr<scalar_t>(),
