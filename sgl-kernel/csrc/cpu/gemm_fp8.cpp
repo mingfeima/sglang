@@ -56,8 +56,11 @@ inline void unpack_B(
   const uint16_t* b_ptr = reinterpret_cast<const uint16_t*>(packed_B);
   const __m512 vd = _mm512_set1_ps(scale);
 
+  constexpr int BLOCK_N = block_size_n();
+  static_assert(BLOCK_N == 32);
+
   for (int k = 0; k < K2; ++k) {
-    for (int n = 0; n < N; n += 64) {
+    for (int n = 0; n < N; n += 64) { // BLOCK_N = 32
         __m512i b8 = _mm512_loadu_si512(b_ptr + k * ldb2 + n);
 
         __m256i b8_0 = _mm512_extracti32x8_epi32(b8, 0);
