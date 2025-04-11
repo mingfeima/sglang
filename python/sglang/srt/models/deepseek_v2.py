@@ -1447,6 +1447,13 @@ class DeepseekV2ForCausalLM(nn.Module):
                     self_attn.w_scale = self_attn.kv_b_proj.weight_scale
                     if _is_hip:
                         self_attn.w_scale *= 2.0
+                if (
+                    w_kc.device == torch.device("cpu")
+                    and cpu_has_amx_support()
+                    and w.dtype == torch.float8_e4m3fn
+                ):
+                    self_attn.w_kc = self_attn.w_kc.to(torch.bfloat16) * self_attn.w_scale
+                    self_attn.w_vc = self_attn.w_vc.to(torch.bfloat16) * self_attn.w_scale
 
     def get_embed_and_head(self):
         return self.model.embed_tokens.weight, self.lm_head.weight
