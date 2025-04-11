@@ -325,8 +325,8 @@ at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& sca
   int64_t block_size_K = block_size[1];
 
   constexpr int64_t BLOCK_N = block_size_n();
-  TORCH_CHECK(block_size_N >= BLOCK_N, "fp8_scaled_mm_cpu: expect block_size_N >= BLOCK_N");
-  TORCH_CHECK(block_size_K >= BLOCK_K, "fp8_scaled_mm_cpu: expect block_size_K >= BLOCK_K");
+  TORCH_CHECK(block_size_N % BLOCK_N == 0, "fp8_scaled_mm_cpu: expect block_size_N to be multiples of BLOCK_N");
+  TORCH_CHECK(block_size_K == BLOCK_K, "fp8_scaled_mm_cpu: expect block_size_K equals to BLOCK_K");
   CHECK_EQ(scales2.size(0), div_up(N, block_size_N));
   CHECK_EQ(scales2.size(1), div_up(K, block_size_K));
 
