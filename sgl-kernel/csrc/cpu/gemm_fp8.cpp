@@ -106,7 +106,7 @@ struct brgemm {
       int ldb,
       int ldc) {
     TORCH_CHECK(false, "struct brgemm: primary template not implemented!");
-  }  
+  }
 };
 
 template <typename scalar_t, bool has_bias>
