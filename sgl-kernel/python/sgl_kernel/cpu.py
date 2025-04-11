@@ -277,6 +277,20 @@ def per_token_quant_int8(x):
     return sgl_kernel.common_ops.per_token_quant_int8_cpu(x)
 
 
+def fp8_scaled_mm(
+    mat1,
+    mat2,
+    scales2,
+    block_size,
+    bias,
+    out_dtype,
+    is_vnni=True,
+):
+    return sgl_kernel.common_ops.fp8_scaled_mm_cpu(
+        mat1, mat2, scales2, block_size, bias, out_dtype, is_vnni
+    )
+
+
 def rotary_position_embedding(
     t_pos,
     q_pe,
