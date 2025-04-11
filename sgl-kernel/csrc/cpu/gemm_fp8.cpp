@@ -243,8 +243,7 @@ void fp8_scaled_mm_kernel_impl(
 
   // TODO: add the support for use_brgemm = false;
   // use avx512-bf16 when a) M is small; b) dtype is bfloat16, otherwise use amx
-  // const bool use_brgemm = (M > 4) || (!std::is_same_v<scalar_t, at::BFloat16>);
-  const bool use_brgemm = true;
+  const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(M);
 
   // parallel on [MB, NB]
   AT_DISPATCH_BOOL(bias != nullptr, has_bias, [&] {
