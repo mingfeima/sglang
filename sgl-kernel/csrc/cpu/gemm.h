@@ -17,6 +17,8 @@ template <> inline bool can_use_brgemm<at::BFloat16>(int M) { return M > 4; }
 template <> inline bool can_use_brgemm<at::Half>(int M) { return true; }
 // TODO: add u8s8 brgemm, this requires PyTorch 2.7
 template <> inline bool can_use_brgemm<int8_t>(int M) { return false; }
+// TODO: add brgemm=false support for fp8
+template <> inline bool can_use_brgemm<at::Float8_e4m3fn>(int M) { return true; }
 
 // work around compiler internal error
 #define BLOCK_K 128 // 4 * TILE_K

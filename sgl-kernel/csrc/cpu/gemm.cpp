@@ -370,8 +370,8 @@ at::Tensor convert_weight_packed(at::Tensor& weight) {
   auto packed_weight = at::empty({}, weight.options());
   const int64_t stride = OC * IC;
 
-  TORCH_CHECK(st == at::kBFloat16 || st == at::kHalf || st == at::kChar,
-      "expect weight to be bfloat16, float16 or int8.");
+  TORCH_CHECK(st == at::kBFloat16 || st == at::kHalf || st == at::kChar || st == at::kFloat8_e4m3fn,
+      "expect weight to be bfloat16, float16, int8 or fp8_e4m3.");
 
   CPU_DISPATCH_PACKED_TYPES(st, [&] {
     // adjust most inner dimension size
