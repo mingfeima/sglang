@@ -195,6 +195,7 @@ class DeepseekV2MoE(nn.Module):
         self.shared_experts_gate_up_proj = None
         self.shared_experts_down_proj = None
         self.shared_experts_is_int8 = None
+        self.shared_experts_is_fp8 = None
         self.experts_impl = None
         self.gate_impl = None
         self.sgl_kernel_cpu_shared_expert = sgl_kernel.cpu.shared_expert
@@ -218,6 +219,10 @@ class DeepseekV2MoE(nn.Module):
                 assert self.shared_experts_down_proj.weight.dtype == torch.int8
                 self.shared_experts_is_int8 = True
 
+            if self.shared_experts_gate_up_proj.weight.dtype == torch.float8_e4m3fn:
+                assert self.shared_experts_down_proj.weight.dtype == torch.float8_e4m3fn
+                self.shared_experts_is_fp8 = True
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
@@ -239,7 +244,11 @@ class DeepseekV2MoE(nn.Module):
         has_shared_experts = self.n_shared_experts is not None
 
         assert use_intel_amx_backend == down_proj.use_intel_amx_backend
-        if has_shared_experts and use_intel_amx_backend:
+        if (
+            has_shared_experts
+            and use_intel_amx_backend
+            and not self.shared_experts_is_fp8  # TODO: remove this when FP8 shared_expert is ready
+        ):
             # [Note] inplace should be False in fused_experts.
             # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
             # While hidden_states is still needed in shared_expert.
@@ -624,6 +633,7 @@ class DeepseekV2AttentionMLA(nn.Module):
         )
 
         self.qkv_proj_with_rope_is_int8 = None
+        self.qkv_proj_with_rope_is_fp8 = None
         if self.q_lora_rank is not None:
             if self.q_a_proj.weight.dtype == torch.int8:
                 assert (
@@ -632,6 +642,13 @@ class DeepseekV2AttentionMLA(nn.Module):
                     == self.kv_a_proj_with_mqa.weight.dtype
                 )
                 self.qkv_proj_with_rope_is_int8 = True
+            if self.q_a_proj.weight.dtype == torch.float8_e4m3fn:
+                assert (
+                    self.q_a_proj.weight.dtype
+                    == self.q_b_proj.weight.dtype
+                    == self.kv_a_proj_with_mqa.weight.dtype
+                )
+                self.qkv_proj_with_rope_is_fp8 = True
 
         params = MParams()
         params.q_lora_rank = self.q_lora_rank
@@ -687,7 +704,11 @@ class DeepseekV2AttentionMLA(nn.Module):
                 else:
                     return self.forward_absorb(positions, hidden_states, forward_batch)
             else:
-                if self.q_lora_rank is not None and self.use_intel_amx_backend:
+                if (
+                    self.q_lora_rank is not None
+                    and self.use_intel_amx_backend
+                    and not self.qkv_proj_with_rope_is_fp8  # TODO: remove this when forward_absorb_fused_mla_rope_cpu is ready
+                ):
                     return self.forward_absorb_fused_mla_rope_cpu(
                         positions, hidden_states, forward_batch
                     )
