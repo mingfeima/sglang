@@ -463,7 +463,7 @@ def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
     # PT int4pack_mm only supports zero_point in float domain, but AWQ uses integer domain.
     # Hence, we need to convert zero_point to float domain.
     # integer domain: w = (qweight - qzeros) * scales
-    #   float domain: w = qweight * scales + zeros - scales * 8
+    #   float domain: w = (qweight - 8) * scales + zeros
     qzeros_unpacked = (qzeros.unsqueeze(-1) >> bitshifts) & 0xF
     qzeros_unpacked = qzeros_unpacked.flatten(-2)
     zeros = ((8 - qzeros_unpacked.float()) * scales.float()).to(scales.dtype)
