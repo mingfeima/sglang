@@ -82,10 +82,20 @@ at::Tensor fused_experts_cpu(at::Tensor& hidden_states, at::Tensor& w1, at::Tens
     std::optional<at::Tensor>& a1_scale, std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
-at::Tensor shared_expert_cpu(at::Tensor& hidden_states, at::Tensor& w1, at::Tensor& w2,
-    at::Tensor& fused_experts_out, double routed_scaling_factor, bool inplace, bool use_int8_w8a8,
-    std::optional<at::Tensor>& w1_scale, std::optional<at::Tensor>& w2_scale,
-    std::optional<at::Tensor>& a1_scale, std::optional<at::Tensor>& a2_scale,
+at::Tensor shared_expert_cpu(
+    at::Tensor& hidden_states,
+    at::Tensor& w1,
+    at::Tensor& w2,
+    at::Tensor& fused_experts_out,
+    double routed_scaling_factor,
+    bool inplace,
+    bool use_int8_w8a8,
+    bool use_fp8_w8a16,
+    std::optional<at::Tensor>& w1_scale,
+    std::optional<at::Tensor>& w2_scale,
+    std::vector<int64_t> block_size,
+    std::optional<at::Tensor>& a1_scale,
+    std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
 // weight absorption

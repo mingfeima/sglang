@@ -8,8 +8,12 @@ from typing import Callable, Optional
 import torch
 from torch.nn import functional as F
 
+from sglang.srt.cpu_utils import cpu_has_amx_support
 from sglang.srt.layers.activation import GeluAndMul, SiluAndMul
 from sglang.srt.layers.moe.topk import select_experts
+
+if cpu_has_amx_support():
+    import sgl_kernel.cpu
 
 
 def fused_moe_forward_native(
@@ -69,6 +73,7 @@ def moe_forward_native(
     activation: str = "silu",
     inplace: bool = True,
     no_combine: bool = False,
+    weight_block_size=None,
 ) -> torch.Tensor:
 
     topk_weights, topk_ids = select_experts(
@@ -113,9 +118,30 @@ def moe_forward_native(
         layer_w13_weight = layer.w13_weight[i]
         layer_w2_weight = layer.w2_weight[i]
 
-        gate_up = F.linear(tokens_for_this_expert, layer_w13_weight)
+        if weight_block_size is not None:
+            gate_up = sgl_kernel.cpu.fp8_scaled_mm(
+                tokens_for_this_expert,
+                layer_w13_weight,
+                layer.w13_weight_scale_inv[i],
+                weight_block_size,
+                None,
+                tokens_for_this_expert.dtype,
+            )
+        else:
+            gate_up = F.linear(tokens_for_this_expert, layer_w13_weight)
+
         gate_up = act(gate_up)
-        expert_out = F.linear(gate_up, layer_w2_weight)
+        if weight_block_size is not None:
+            expert_out = sgl_kernel.cpu.fp8_scaled_mm(
+                gate_up,
+                layer_w2_weight,
+                layer.w2_weight_scale_inv[i],
+                weight_block_size,
+                None,
+                tokens_for_this_expert.dtype,
+            )
+        else:
+            expert_out = F.linear(gate_up, layer_w2_weight)
         outputs.append(expert_out)
         start_idx = end_idx
 
