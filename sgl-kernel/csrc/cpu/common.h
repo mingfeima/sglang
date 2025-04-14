@@ -22,7 +22,7 @@ namespace {
     }                                                                            \
   }()
 
-// dispatch: bfloat16, float16, int8_t
+// dispatch: bfloat16, float16, int8_t, fp8_e4m3
 #define CPU_DISPATCH_PACKED_TYPES(TYPE, ...)                                    \
   [&] {                                                                         \
     switch (TYPE) {                                                             \
@@ -38,11 +38,14 @@ namespace {
         using packed_t = int8_t;                                                \
         return __VA_ARGS__();                                                   \
       }                                                                         \
+      case at::ScalarType::Float8_e4m3fn : {                                    \
+        using packed_t = at::Float8_e4m3fn;                                     \
+        return __VA_ARGS__();                                                   \
+      }                                                                         \
       default:                                                                  \
         TORCH_CHECK(false, "Unsupported floating data type.\n");                \
     }                                                                           \
   }()
-
 
 #define UNUSED(x) (void)(x)
 
