@@ -137,6 +137,7 @@ class _ColumnvLLMParameter(BasevLLMParameter):
         param_data = self.data
 
         tp_rank = get_tensor_model_parallel_rank()
+        param_data = param_data.narrow(self.output_dim, shard_offset, shard_size)
 
         from sglang.srt.cpu_utils import (
             get_actual_shard_size,
@@ -146,19 +147,18 @@ class _ColumnvLLMParameter(BasevLLMParameter):
         actual_shard_size = get_actual_shard_size(
             shard_size, tp_rank * shard_size, loaded_weight.size(self.output_dim)
         )
-
-        # See [Note] Reset padded weights to zero.
-        reset_param_data_if_needed(
-            param_data,
-            self.output_dim,
-            shard_offset + actual_shard_size,
-            shard_size - actual_shard_size,
-        )
-        param_data = param_data.narrow(self.output_dim, shard_offset, actual_shard_size)
         if not use_presharded_weights:
             loaded_weight = loaded_weight.narrow(
                 self.output_dim, tp_rank * shard_size, actual_shard_size
             )
+        # See [Note] Reset padded weights to zero.
+        reset_param_data_if_needed(
+            param_data,
+            self.output_dim,
+            actual_shard_size,
+            shard_size - actual_shard_size,
+        )
+        param_data = param_data.narrow(self.output_dim, 0, actual_shard_size)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
