@@ -260,8 +260,10 @@ class DeepseekV2MoE(nn.Module):
                 self.routed_scaling_factor,
                 inplace=True,
                 use_int8_w8a8=shared_experts_is_int8,
+                use_fp8_w8a16=False,
                 w1_scale=gate_up_proj.weight_scale if shared_experts_is_int8 else None,
                 w2_scale=down_proj.weight_scale if shared_experts_is_int8 else None,
+                block_size=None,
             )
         else:
             shared_output = None
