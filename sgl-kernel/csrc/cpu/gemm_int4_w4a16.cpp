@@ -11,8 +11,7 @@ struct tinygemm_kernel_nn {
     const uint8_t* __restrict__ Bz, const scalar_t* __restrict__ Bs,
     const float* __restrict__ bias, int64_t K, int group_size, int64_t lda, int64_t ldb, int64_t ldc,
     int64_t strideBz, int64_t strideBs) {
-  auto scalar_name = typeid(scalar_t).name();
-  TORCH_CHECK(false, "tinygemm_kernel_nn: scalar path not implemented!", scalar_name);
+  TORCH_CHECK(false, "tinygemm_kernel_nn: scalar path not implemented!");
   }
 };
 
