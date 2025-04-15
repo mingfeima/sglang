@@ -1,8 +1,8 @@
 """Common utilities for testing and benchmarking"""
 
 import argparse
-import asyncio
 import copy
+import asyncio
 import os
 import random
 import subprocess
@@ -32,6 +32,7 @@ DEFAULT_FP8_MODEL_NAME_FOR_ACCURACY_TEST = "neuralmagic/Meta-Llama-3-8B-Instruct
 DEFAULT_FP8_MODEL_NAME_FOR_DYNAMIC_QUANT_ACCURACY_TEST = (
     "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic"
 )
+
 DEFAULT_MODEL_NAME_FOR_TEST = "meta-llama/Llama-3.1-8B-Instruct"
 DEFAULT_SMALL_MODEL_NAME_FOR_TEST = "meta-llama/Llama-3.2-1B-Instruct"
 DEFAULT_MOE_MODEL_NAME_FOR_TEST = "mistralai/Mixtral-8x7B-Instruct-v0.1"
@@ -51,7 +52,6 @@ DEFAULT_MODEL_NAME_FOR_NIGHTLY_EVAL_FP8_TP2 = "neuralmagic/Meta-Llama-3.1-70B-In
 DEFAULT_MODEL_NAME_FOR_NIGHTLY_EVAL_QUANT_TP1 = "hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4,hugging-quants/Meta-Llama-3.1-8B-Instruct-GPTQ-INT4,hugging-quants/Mixtral-8x7B-Instruct-v0.1-AWQ-INT4"
 DEFAULT_SMALL_MODEL_NAME_FOR_TEST_QWEN = "Qwen/Qwen2.5-1.5B-Instruct"
 DEFAULT_SMALL_VLM_MODEL_NAME = "Qwen/Qwen2-VL-2B"
-
 
 DEFAULT_EAGLE_TARGET_MODEL_FOR_TEST = "meta-llama/Llama-2-7b-chat-hf"
 DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST = "lmsys/sglang-EAGLE-llama2-chat-7B"
@@ -257,14 +257,32 @@ def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
         args.port = default_port.get(args.backend, None)
     return args
 
+def auto_detect_device() -> str:
+    """Auto-detect available device platform"""
+    import torch
+    
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.version, "hip") and torch.version.hip:
+        return "rocm"
+    else:
+        return "cpu"
 
 def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
     parser.add_argument("--parallel", type=int, default=64)
     parser.add_argument("--host", type=str, default="http://127.0.0.1")
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--backend", type=str, default="srt")
+    parser.add_argument(
+        "--device", 
+        type=str, 
+        default="auto",  
+        choices=["auto", "cuda", "rocm", "cpu"],  
+        help="Device type (auto/cuda/rocm/cpu). Auto will detect available platforms"
+    )
     parser.add_argument("--result-file", type=str, default="result.jsonl")
     args = parser.parse_args()
+    
     return args
 
 
@@ -354,7 +372,20 @@ def popen_launch_server(
     env: Optional[dict] = None,
     return_stdout_stderr: Optional[tuple] = None,
     pd_seperated: bool = False,
+    device: str = "auto"  
 ):
+    """Launch a server process with automatic device detection.
+    
+    Args:
+        device: Device type ("auto", "cuda", "rocm" or "cpu"). 
+                If "auto", will detect available platforms automatically.
+    """
+    # Auto-detect device if needed
+    if device == "auto":
+        device = auto_detect_device()
+        print(f"Auto-detected device: {device}", flush=True)
+        other_args += ["--device", str(device)]
+
     _, host, port = base_url.split(":")
     host = host[2:]
 
@@ -423,6 +454,11 @@ def popen_launch_server(
                     return process
             except requests.RequestException:
                 pass
+
+            return_code = process.poll()
+            if return_code is not None:
+                raise Exception(f"Server unexpectedly exits ({return_code=}).")
+
             time.sleep(10)
 
     kill_process_tree(process.pid)
@@ -453,7 +489,13 @@ def run_with_timeout(
     return ret_value[0]
 
 
-def run_unittest_files(files: List, timeout_per_file: float):
+@dataclass
+class TestFile:
+    name: str
+    estimated_time: float = 60
+
+
+def run_unittest_files(files: List[TestFile], timeout_per_file: float):
     tic = time.time()
     success = True
 
@@ -524,6 +566,7 @@ def get_benchmark_args(
     disable_ignore_eos=False,
     seed: int = 0,
     pd_seperated: bool = False,
+    device=None,
 ):
     return SimpleNamespace(
         backend="sglang",
@@ -554,6 +597,7 @@ def get_benchmark_args(
         lora_name=None,
         prompt_suffix="",
         pd_seperated=pd_seperated,
+        device=device
     )
 
 
@@ -572,6 +616,7 @@ def run_bench_serving(
     disable_ignore_eos=False,
     need_warmup=False,
     seed: int = 0,
+    device=None
 ):
     # Launch the server
     base_url = DEFAULT_URL_FOR_TEST
@@ -596,6 +641,7 @@ def run_bench_serving(
         disable_stream=disable_stream,
         disable_ignore_eos=disable_ignore_eos,
         seed=seed,
+        device=device
     )
 
     try:
@@ -753,6 +799,7 @@ def run_and_check_memory_leak(
     if disable_overlap:
         other_args += ["--disable-overlap-schedule"]
 
+    print(other_args, flush=True)
     model = DEFAULT_MODEL_NAME_FOR_TEST
     port = random.randint(4000, 5000)
     base_url = f"http://127.0.0.1:{port}"
@@ -870,7 +917,6 @@ def run_mulit_request_test(
     enable_overlap=False,
     chunked_prefill_size=32,
 ):
-
     def workload_func(base_url, model):
         def run_one(_):
             prompt = """
@@ -905,6 +951,10 @@ def run_mulit_request_test(
 
 
 def write_github_step_summary(content):
+    if not os.environ.get("GITHUB_STEP_SUMMARY"):
+        logging.warning("GITHUB_STEP_SUMMARY environment variable not set")
+        return
+
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
         f.write(content)
 
@@ -982,3 +1032,30 @@ def run_logprob_check(self: unittest.TestCase, arg: Tuple):
                                 rank += 1
                             else:
                                 raise
+
+
+class CustomTestCase(unittest.TestCase):
+    def _callTestMethod(self, method):
+        _retry_execution(
+            lambda: super(CustomTestCase, self)._callTestMethod(method),
+            max_retry=_get_max_retry(),
+        )
+
+
+def _get_max_retry():
+    return int(os.environ.get("SGLANG_TEST_MAX_RETRY", "2" if is_in_ci() else "0"))
+
+
+def _retry_execution(fn, max_retry: int):
+    if max_retry == 0:
+        fn()
+        return
+
+    try:
+        fn()
+    except Exception as e:
+        print(
+            f"retry_execution failed once and will retry. This may be an error or a flaky test. Error: {e}"
+        )
+        traceback.print_exc()
+        _retry_execution(fn, max_retry=max_retry - 1)
