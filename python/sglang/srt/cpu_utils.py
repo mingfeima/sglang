@@ -6,6 +6,7 @@ import torch
 
 if TYPE_CHECKING:
     from sglang.srt.configs.model_config import ModelConfig
+    from sglang.srt.configs.load_config import LoadConfig
 
 from sglang.srt.layers.vocab_parallel_embedding import pad_vocab_size
 
@@ -19,28 +20,25 @@ except:
     is_intel_amx_backend_available = False
 
 
-# TODO: this partially duplicates with def get_quant_config in weight_utils.py
-# but it requires load_config. How to refactor the code here
-def get_moe_padding_size(model_config):
+def get_moe_padding_size(model_config, load_config):
     weight_block_size = None
-    hf_quant_config = getattr(model_config.hf_config, "quantization_config", None)
-    hf_text_config = getattr(model_config.hf_config, "text_config", None)
-    if hf_quant_config is None and hf_text_config is not None:
-        hf_quant_config = getattr(hf_text_config, "quantization_config", None)
 
-    if hf_quant_config is not None:
-        if "weight_block_size" in hf_quant_config:
-            # See NOTE(HandH1998): To ensure proper alignment of the block-wise quantization scales, the output_size of the weights for both the gate and up layers must be divisible by block_n.
-            weight_block_size = hf_quant_config["weight_block_size"]
+    from sglang.srt.model_loader.loader import _get_quantization_config
 
-            assert (
-                len(weight_block_size) == 2
-            ), "Only len(weight_block_size) == 2 is supported"
-            assert (
-                weight_block_size[0] == weight_block_size[1]
-            ), "Only weight_block_size[0] == weight_block_size[1] is supported"
+    quant_config = _get_quantization_config(model_config, load_config)
 
-            return weight_block_size[0]
+    if quant_config is not None and hasattr(quant_config, "weight_block_size"):
+        # See NOTE(HandH1998): To ensure proper alignment of the block-wise quantization scales, the output_size of the weights for both the gate and up layers must be divisible by block_n.
+        weight_block_size = getattr(quant_config, "weight_block_size")
+
+        assert (
+            len(weight_block_size) == 2
+        ), "Only len(weight_block_size) == 2 is supported"
+        assert (
+            weight_block_size[0] == weight_block_size[1]
+        ), "Only weight_block_size[0] == weight_block_size[1] is supported"
+
+        return weight_block_size[0]
 
     return DEFAULT_MOE_PADDING_SIZE
 
@@ -55,7 +53,9 @@ def update_intermediate_size(model_config, attr_name, intermediate_padding_size)
     return model_config
 
 
-def update_config(model_config: ModelConfig, tp_size: int) -> ModelConfig:
+def update_config(
+    model_config: ModelConfig, load_config: LoadConfig, tp_size: int
+) -> ModelConfig:
     # Support the case where the num_attention_heads is not divisible by the TP size.
     if model_config.num_attention_heads % tp_size != 0:
         query_heads_per_kv = (
@@ -72,7 +72,9 @@ def update_config(model_config: ModelConfig, tp_size: int) -> ModelConfig:
         model_config.hf_config.num_attention_heads = num_attention_heads
         model_config.hf_text_config.num_attention_heads = num_attention_heads
 
-    intermediate_padding_size = tp_size * get_moe_padding_size(model_config)
+    intermediate_padding_size = tp_size * get_moe_padding_size(
+        model_config, load_config
+    )
     model_config = update_intermediate_size(
         model_config, "moe_intermediate_size", intermediate_padding_size
     )
