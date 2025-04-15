@@ -151,7 +151,7 @@ class _ColumnvLLMParameter(BasevLLMParameter):
         reset_param_data_if_needed(
             param_data,
             self.output_dim,
-            actual_shard_size,
+            shard_offset + actual_shard_size,
             shard_size - actual_shard_size,
         )
         param_data = param_data.narrow(self.output_dim, shard_offset, actual_shard_size)
