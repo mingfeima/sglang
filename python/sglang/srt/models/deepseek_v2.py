@@ -23,7 +23,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers import PretrainedConfig
-from vllm import _custom_ops as ops
 
 from sglang.srt.cpu_utils import (
     PackWeightMethod,
@@ -72,6 +71,11 @@ from sglang.srt.utils import add_prefix, is_cuda_available, is_hip
 
 if cpu_has_amx_support():
     import sgl_kernel.cpu
+
+    _has_amx = True
+else:
+    _has_amx = False
+
 
 _is_hip = is_hip()
 
@@ -136,7 +140,9 @@ class MoEGate(nn.Module):
         else:
             self.e_score_correction_bias = None
         self.quant_method = PackWeightMethod(weight_names=["weight"])
-        self.sgl_kernel_cpu_weight_packed_linear = sgl_kernel.cpu.weight_packed_linear
+        self.sgl_kernel_cpu_weight_packed_linear = (
+            sgl_kernel.cpu.weight_packed_linear if _has_amx else None
+        )
 
     def forward(self, hidden_states):
         if self.use_intel_amx_backend:
@@ -198,7 +204,9 @@ class DeepseekV2MoE(nn.Module):
         self.shared_experts_is_fp8 = None
         self.experts_impl = None
         self.gate_impl = None
-        self.sgl_kernel_cpu_shared_expert = sgl_kernel.cpu.shared_expert
+        self.sgl_kernel_cpu_shared_expert = (
+            sgl_kernel.cpu.shared_expert if _has_amx else None
+        )
 
         if config.n_shared_experts is not None:
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
@@ -215,7 +223,11 @@ class DeepseekV2MoE(nn.Module):
             self.shared_experts_down_proj = self.shared_experts.down_proj
 
             # Cache whether shared_experts is int8
-            if self.shared_experts_gate_up_proj.weight.dtype == torch.int8:
+            # quantized models might not have .weight
+            if (
+                hasattr(self.shared_experts_gate_up_proj, "weight")
+                and self.shared_experts_gate_up_proj.weight.dtype == torch.int8
+            ):
                 assert self.shared_experts_down_proj.weight.dtype == torch.int8
                 self.shared_experts_is_int8 = True
 
@@ -630,14 +642,22 @@ class DeepseekV2AttentionMLA(nn.Module):
         self.w_vc = None
         self.w_scale = None
 
-        self.quant_method = PackWeightMethod(
-            weight_names=["w_kc", "w_vc"], transpose_dims=[[1, 2], [1, 2]]
-        )
+        if cpu_has_amx_support():
+            self.quant_method = PackWeightMethod(
+                weight_names=["w_kc", "w_vc"], transpose_dims=[[1, 2], [1, 2]]
+            )
+        else:
+            self.quant_method = None
+            self.use_intel_amx_backend = False
 
         self.qkv_proj_with_rope_is_int8 = None
         self.qkv_proj_with_rope_is_fp8 = None
         if self.q_lora_rank is not None:
-            if self.q_a_proj.weight.dtype == torch.int8:
+            # quantized models might not have .weight
+            if (
+                hasattr(self.q_a_proj, "weight")
+                and self.q_a_proj.weight.dtype == torch.int8
+            ):
                 assert (
                     self.q_a_proj.weight.dtype
                     == self.q_b_proj.weight.dtype
@@ -1282,6 +1302,33 @@ class DeepseekV2Model(nn.Module):
         return hidden_states
 
 
+def _awq_dequantize(qweight: torch.Tensor, scales: torch.Tensor, qzeros: torch.Tensor):
+    if qweight.is_cuda:
+        from vllm import _custom_ops as ops
+
+        # on CPU, this is not available
+        return ops.awq_dequantize(qweight, scales, qzeros, 0, 0, 0)
+
+    # qweight: (K, N / 8), int32
+    # qzeros: (K / group_size, N / 8), int32
+    # scales: (K / group_size, N), bfloat16
+
+    # https://github.com/casper-hansen/AutoAWQ/blob/23d584c2/awq/modules/triton/gemm.py#L73-L86
+    bitshifts = torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], dtype=torch.int32) * 4
+    qweight_unpacked = (qweight.unsqueeze(-1) >> bitshifts) & 0xF
+    qweight_unpacked = qweight_unpacked.flatten(-2)  # (K, N)
+
+    qzeros_unpacked = (qzeros.unsqueeze(-1) >> bitshifts) & 0xF
+    qzeros_unpacked = qzeros_unpacked.flatten(-2)  # (K / group_size, N)
+
+    num_groups = qzeros.shape[0]
+    qweight_unpacked = qweight_unpacked.unflatten(0, (num_groups, -1))
+    qweight = qweight_unpacked - qzeros_unpacked.unsqueeze(1)
+    weight = qweight.float() * scales.unsqueeze(1).float()
+    weight = weight.flatten(0, 1).to(scales.dtype)
+    return weight
+
+
 class DeepseekV2ForCausalLM(nn.Module):
 
     def __init__(
@@ -1409,13 +1456,10 @@ class DeepseekV2ForCausalLM(nn.Module):
                 self_attn = self.model.layers[layer_id].self_attn
                 if hasattr(self_attn.kv_b_proj, "qweight"):
                     # AWQ compatible
-                    w = ops.awq_dequantize(
+                    w = _awq_dequantize(
                         self_attn.kv_b_proj.qweight,
                         self_attn.kv_b_proj.scales,
                         self_attn.kv_b_proj.qzeros,
-                        0,
-                        0,
-                        0,
                     ).T
                 else:
                     w = self_attn.kv_b_proj.weight
