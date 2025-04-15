@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from types import SimpleNamespace
 from typing import Callable, List, Optional, Tuple
@@ -616,7 +617,6 @@ def run_bench_serving(
     disable_ignore_eos=False,
     need_warmup=False,
     seed: int = 0,
-    device=None
 ):
     # Launch the server
     base_url = DEFAULT_URL_FOR_TEST
@@ -692,6 +692,19 @@ def run_bench_serving_multi(
 
 
 def run_bench_one_batch(model, other_args):
+
+    """Launch a offline process with automatic device detection.
+    
+    Args:
+        device: Device type ("auto", "cuda", "rocm" or "cpu"). 
+                If "auto", will detect available platforms automatically.
+    """
+    # Auto-detect device if needed
+
+    device = auto_detect_device()
+    print(f"Auto-detected device: {device}", flush=True)
+    other_args += ["--device", str(device)]
+
     command = [
         "python3",
         "-m",
