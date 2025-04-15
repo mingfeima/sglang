@@ -21,8 +21,6 @@ except:
 
 
 def get_moe_padding_size(model_config, load_config):
-    weight_block_size = None
-
     from sglang.srt.model_loader.loader import _get_quantization_config
 
     quant_config = _get_quantization_config(model_config, load_config)
