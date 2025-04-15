@@ -121,6 +121,10 @@ at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2,
 at::Tensor int8_scaled_mm_with_quant(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& scales2,
     std::optional<at::Tensor>& bias, at::ScalarType out_dtype, bool is_vnni);
 
+// int4 gemm
+at::Tensor int4_w4a16_linear(at::Tensor& x, at::Tensor& w, at::Tensor& w_zeros,
+    at::Tensor& w_scales, std::optional<at::Tensor>& bias);
+
 // bmm
 void bmm_cpu(at::Tensor& out, at::Tensor& mat1, at::Tensor& mat2, bool is_vnni,
     std::optional<at::Tensor>& scale);
@@ -256,6 +260,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   // quant + igemm
   m.def("int8_scaled_mm_with_quant", &int8_scaled_mm_with_quant, "fused per row quant and int8 scaled mm for intel AMX");
+
+  // int4 gemm
+  m.def("int4_w4a16_linear_cpu", &int4_w4a16_linear, "int4 w4a16 linear");
 
   // bmm
   m.def("bmm_cpu", &bmm_cpu, "bmm kernel for intel AMX");
