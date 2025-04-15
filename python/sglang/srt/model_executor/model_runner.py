@@ -110,8 +110,6 @@ class ModelRunner:
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
         self.tp_size = tp_size
-        if self.device == "cpu":
-            model_config = update_config(model_config, self.tp_size)
         self.model_config = model_config
         self.dist_port = nccl_port
         self.server_args = server_args
@@ -386,6 +384,10 @@ class ModelRunner:
             load_format=self.server_args.load_format,
             download_dir=self.server_args.download_dir,
         )
+        if self.device == "cpu":
+            self.model_config = update_config(
+                self.model_config, self.load_config, self.tp_size
+            )
         if self.server_args.load_format == "gguf":
             monkey_patch_vllm_gguf_config()
 
