@@ -1,7 +1,7 @@
 import unittest
 
 import expecttest
-import sgl_kernel.cpu
+import sgl_kernel
 import torch
 
 
