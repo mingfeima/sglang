@@ -16,7 +16,7 @@ def fused_experts(
     a2_scale=None,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.fused_experts_cpu(
+    return torch.ops.sgl_kernel.fused_experts_cpu(
         x,
         w13_weight,
         w2_weight,
@@ -48,7 +48,7 @@ def shared_expert(
     a2_scale=None,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.shared_expert_cpu(
+    return torch.ops.sgl_kernel.shared_expert_cpu(
         hidden_states,
         w1,
         w2,
@@ -67,7 +67,7 @@ def shared_expert(
 
 
 def convert_weight_packed(weight):
-    return sgl_kernel.common_ops.convert_weight_packed(weight)
+    return torch.ops.sgl_kernel.convert_weight_packed(weight)
 
 
 def qkv_proj_with_rope(
@@ -87,7 +87,7 @@ def qkv_proj_with_rope(
     kv_a_proj_scale=None,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.qkv_proj_with_rope(
+    return torch.ops.sgl_kernel.qkv_proj_with_rope(
         hidden_states,
         q_a_proj_weight,
         q_b_proj_weight,
@@ -121,7 +121,7 @@ def decode_attention(
     sm_scale,
     logit_cap=0.0,
 ):
-    sgl_kernel.common_ops.decode_attention_cpu(
+    torch.ops.sgl_kernel.decode_attention_cpu(
         q,
         k_buffer,
         v_buffer,
@@ -154,7 +154,7 @@ def extend_attention(
     sm_scale,
     logit_cap=0.0,
 ):
-    sgl_kernel.common_ops.extend_attention_cpu(
+    torch.ops.sgl_kernel.extend_attention_cpu(
         q_extend,
         k_extend,
         v_extend,
@@ -178,7 +178,7 @@ def weight_packed_linear(
     bias,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.weight_packed_linear(
+    return torch.ops.sgl_kernel.weight_packed_linear(
         x,
         weight,
         bias,
@@ -194,7 +194,7 @@ def grouped_topk(
     num_expert_group,
     topk_group,
 ):
-    return sgl_kernel.common_ops.grouped_topk_cpu(
+    return torch.ops.sgl_kernel.grouped_topk_cpu(
         hidden_states,
         router_logits,
         top_k,
@@ -213,7 +213,7 @@ def biased_grouped_topk(
     num_expert_group,
     topk_group,
 ):
-    return sgl_kernel.common_ops.biased_grouped_topk_cpu(
+    return torch.ops.sgl_kernel.biased_grouped_topk_cpu(
         hidden_states,
         router_logits,
         bias,
@@ -230,7 +230,7 @@ def fused_add_rmsnorm(
     weight,
     eps,
 ):
-    sgl_kernel.common_ops.fused_add_rmsnorm_cpu(
+    torch.ops.sgl_kernel.fused_add_rmsnorm_cpu(
         input,
         residual,
         weight,
@@ -243,7 +243,7 @@ def rmsnorm(
     weight,
     eps,
 ):
-    return sgl_kernel.common_ops.rmsnorm_cpu(
+    return torch.ops.sgl_kernel.rmsnorm_cpu(
         input,
         weight,
         eps,
@@ -259,7 +259,7 @@ def int8_scaled_mm(
     out_dtype,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.int8_scaled_mm_cpu(
+    return torch.ops.sgl_kernel.int8_scaled_mm_cpu(
         mat1, mat2, scales1, scales2, bias, out_dtype, is_vnni
     )
 
@@ -272,13 +272,13 @@ def int8_scaled_mm_with_quant(
     out_dtype,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.int8_scaled_mm_with_quant(
+    return torch.ops.sgl_kernel.int8_scaled_mm_with_quant(
         mat1, mat2, scales2, bias, out_dtype, is_vnni
     )
 
 
 def per_token_quant_int8(x):
-    return sgl_kernel.common_ops.per_token_quant_int8_cpu(x)
+    return torch.ops.sgl_kernel.per_token_quant_int8_cpu(x)
 
 
 def fp8_scaled_mm(
@@ -290,7 +290,7 @@ def fp8_scaled_mm(
     out_dtype,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.fp8_scaled_mm_cpu(
+    return torch.ops.sgl_kernel.fp8_scaled_mm_cpu(
         mat1, mat2, scales2, block_size, bias, out_dtype, is_vnni
     )
 
@@ -301,7 +301,7 @@ def rotary_position_embedding(
     k_pe,
     t_emb_pos,
 ):
-    return sgl_kernel.common_ops.rotary_position_embedding_cpu(
+    return torch.ops.sgl_kernel.rotary_position_embedding_cpu(
         t_pos,
         q_pe,
         k_pe,
@@ -312,8 +312,8 @@ def rotary_position_embedding(
 def silu_and_mul(
     input,
 ):
-    return sgl_kernel.common_ops.silu_and_mul_cpu(input)
+    return torch.ops.sgl_kernel.silu_and_mul_cpu(input)
 
 
 def bmm(out, mat1, mat2, is_vnni=True, scale=None):
-    return sgl_kernel.common_ops.bmm_cpu(out, mat1, mat2, is_vnni, scale)
+    return torch.ops.sgl_kernel.bmm_cpu(out, mat1, mat2, is_vnni, scale)

@@ -47,3 +47,5 @@ from sgl_kernel.speculative import (
     tree_speculative_sampling_target_only,
 )
 from sgl_kernel.version import __version__
+
+from sgl_kernel.cpu import *
