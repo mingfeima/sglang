@@ -384,6 +384,7 @@ def popen_launch_server(
     env: Optional[dict] = None,
     return_stdout_stderr: Optional[tuple] = None,
     pd_seperated: bool = False,
+    device: str = "auto"  
 ):
     """Launch a server process with automatic device detection.
     
