@@ -270,12 +270,29 @@ def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
         args.port = default_port.get(args.backend, None)
     return args
 
+def auto_detect_device() -> str:
+    """Auto-detect available device platform"""
+    import torch
+    
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.version, "hip") and torch.version.hip:
+        return "rocm"
+    else:
+        return "cpu"
 
 def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
     parser.add_argument("--parallel", type=int, default=64)
     parser.add_argument("--host", type=str, default="http://127.0.0.1")
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--backend", type=str, default="srt")
+    parser.add_argument(
+        "--device", 
+        type=str, 
+        default="auto",  
+        choices=["auto", "cuda", "rocm", "cpu"],  
+        help="Device type (auto/cuda/rocm/cpu). Auto will detect available platforms"
+    )
     parser.add_argument("--result-file", type=str, default="result.jsonl")
     args = parser.parse_args()
     return args
@@ -368,6 +385,18 @@ def popen_launch_server(
     return_stdout_stderr: Optional[tuple] = None,
     pd_seperated: bool = False,
 ):
+    """Launch a server process with automatic device detection.
+    
+    Args:
+        device: Device type ("auto", "cuda", "rocm" or "cpu"). 
+                If "auto", will detect available platforms automatically.
+    """
+    # Auto-detect device if needed
+    if device == "auto":
+        device = auto_detect_device()
+        print(f"Auto-detected device: {device}", flush=True)
+        other_args += ["--device", str(device)]
+
     _, host, port = base_url.split(":")
     host = host[2:]
 
@@ -549,6 +578,17 @@ def get_benchmark_args(
     seed: int = 0,
     pd_seperated: bool = False,
 ):
+    """Launch a offline process with automatic device detection.
+    
+    Args:
+        device: Device type ("auto", "cuda", "rocm" or "cpu"). 
+                If "auto", will detect available platforms automatically.
+    """
+    # Auto-detect device if needed
+
+    device = auto_detect_device()
+    print(f"Auto-detected device: {device}", flush=True)
+
     return SimpleNamespace(
         backend="sglang",
         base_url=base_url,
@@ -670,6 +710,19 @@ def run_bench_serving_multi(
 
 
 def run_bench_one_batch(model, other_args):
+
+    """Launch a offline process with automatic device detection.
+    
+    Args:
+        device: Device type ("auto", "cuda", "rocm" or "cpu"). 
+                If "auto", will detect available platforms automatically.
+    """
+    # Auto-detect device if needed
+
+    device = auto_detect_device()
+    print(f"Auto-detected device: {device}", flush=True)
+    other_args += ["--device", str(device)]
+
     command = [
         "python3",
         "-m",
