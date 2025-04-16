@@ -144,6 +144,8 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
       }
 
       // sum of A within this group
+      // NOTE: if we do zero point subtraction when loading B, we don't need to
+      // compute A_sum
       Unroll<ROWS>{}([&](auto row) {
         __m512 acc = _mm512_cvtpbh_ps((__m256bh)_mm256_loadu_ps(a_ptr + row * lda2 + k));
         for (int j = 1; j < group_size / 16; ++j) {
