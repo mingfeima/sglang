@@ -14,23 +14,15 @@ limitations under the License.
 ==============================================================================*/
 
 #include <ATen/core/dispatch/Dispatcher.h>
+#include <torch/extension.h>
 #include <torch/library.h>
 
 #include "shm.h"
 
-#define _CONCAT(A, B) A##B
-#define CONCAT(A, B) _CONCAT(A, B)
-
-#define _STRINGIFY(A) #A
-#define STRINGIFY(A) _STRINGIFY(A)
-
 #define TORCH_LIBRARY_EXPAND(NAME, MODULE) TORCH_LIBRARY(NAME, MODULE)
 
-#define REGISTER_EXTENSION(NAME)                                                                      \
-  PyMODINIT_FUNC CONCAT(PyInit_, NAME)() {                                                            \
-    static struct PyModuleDef module = {PyModuleDef_HEAD_INIT, STRINGIFY(NAME), nullptr, 0, nullptr}; \
-    return PyModule_Create(&module);                                                                  \
-  }
+#define PREPARE_MODULE_DEF(NAME) \
+  static struct PyModuleDef _##NAME##_module_def = {PyModuleDef_HEAD_INIT, #NAME, nullptr, 0, nullptr};
 
 // silu_and_mul
 at::Tensor silu_and_mul_cpu(at::Tensor& input);
@@ -258,14 +250,16 @@ TORCH_LIBRARY_EXPAND(sgl_kernel, m) {
       "w2_scale, int[]? block_size, Tensor? a1_scale, Tensor? a2_scale, bool is_vnni) -> Tensor");
   m.impl("shared_expert_cpu", torch::kCPU, &shared_expert_cpu);
 
-  // all reduce
-  //   m.def("initialize(int size, int rank)");
-  //   m.def("shm_allreduce", &shm_allreduce, "low latency all_reduce implementation for CPU");
-  //   m.def("shm_allgather", &shm_allgather, "low latency all_gather implementation for CPU");
-
   // rope
   m.def("rotary_position_embedding_cpu(Tensor t_pos, Tensor q_pe, Tensor k_pe, Tensor t_emb_pos) -> (Tensor, Tensor)");
   m.impl("rotary_position_embedding_cpu", torch::kCPU, &rotary_position_embedding_cpu);
 }
 
-REGISTER_EXTENSION(common_ops)
+PREPARE_MODULE_DEF(common_ops)
+
+PYBIND11_MODULE(common_ops, m) {
+  // all reduce
+  m.def("initialize", &initialize, "shared memory initialization for CPU");
+  m.def("shm_allreduce", &shm_allreduce, "low latency all_reduce implementation for CPU");
+  m.def("shm_allgather", &shm_allgather, "low latency all_gather implementation for CPU");
+}
