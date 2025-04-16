@@ -22,12 +22,6 @@ inline __m512 CVT_INT8_TO_FP32(__m128i x) {
 
 #if defined(CPU_CAPABILITY_AVX512)
 
-// 0-15 in bf16 bits
-const uint16_t BF16_LUT[] = {0x0000, 0x3F80, 0x4000, 0x4040,
-                             0x4080, 0x40A0, 0x40C0, 0x40E0,
-                             0x4100, 0x4110, 0x4120, 0x4130,
-                             0x4140, 0x4150, 0x4160, 0x4170};
-
 inline uint32_t f32_as_u32(float x) {
   uint32_t tmp;
   std::memcpy(&tmp, &x, sizeof(tmp));
@@ -52,7 +46,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     constexpr int COLS = BLOCK_N / 16;
 
     // prefetch distance
-    constexpr int PREFETCH_SIZE_K = 0;
+    constexpr int PREFETCH_SIZE_K = 16 * 4;
 
     __m512bh va;
     __m512bh vb[COLS];
@@ -60,12 +54,20 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     __m512 vc_master[ROWS * COLS];
 
     __m256i mask = _mm256_set1_epi8(0xF);  // lower 4 bit
-    __m512i bf16_lut = _mm512_castsi256_si512(
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(BF16_LUT)));
-    __m512 va_sum;
-    __m512 scale[COLS];
-    __m512 zero_scale[COLS];
-    float A_sum[ROWS] = {};
+    // w and z are in [0,15], hence (w-z) is in [-15,15]
+    // we will add 15 to it to shift it to [0,30] for lookup table indexing
+    __m256i fifteen = _mm256_set1_epi8(15);
+    __m512i bf16_lut = _mm512_set_epi16(0x0000, 0x4170, 0x4160, 0x4150, 0x4140, 0x4130, 0x4120, 0x4110,
+                                        0x4100, 0x40E0, 0x40C0, 0x40A0, 0x4080, 0x4040, 0x4000, 0x3F80,
+                                        0x0000,-0x4080,-0x4000,-0x3FC0,-0x3F80,-0x3F60,-0x3F40,-0x3F20,
+                                       -0x3F00,-0x3EF0,-0x3EE0,-0x3ED0,-0x3EC0,-0x3EB0,-0x3EA0,-0x3E90);
+    __m512 scales[COLS];
+    __m256i zeros[COLS * 2];
+    // repeat interleave
+    __m256i idx2 = _mm256_set_epi8(31, 31, 30, 30, 29, 29, 28, 28, 27, 27, 26, 26, 25, 25, 24, 24,
+                                   23, 23, 22, 22, 21, 21, 20, 20, 19, 19, 18, 18, 17, 17, 16, 16);
+    __m256i idx1 = _mm256_set_epi8(15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10,  9,  9,  8,  8,
+                                    7,  7,  6,  6,  5,  5,  4,  4,  3,  3,  2,  2,  1,  1,  0,  0);
 
     const int64_t K2 = K >> 1;
     const int64_t lda2 = lda >> 1;
@@ -84,6 +86,31 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     };
     Unroll<ROWS * COLS>{}(loadc);
 
+    // x * ((w - zeros) * scales)
+    // = (x * (w - zeros)) * scales
+
+    auto pre_compute = [&](auto i, int64_t kgs) {
+      constexpr int row = i / COLS;
+      constexpr int col = i % COLS;
+      vc[i] = _mm512_set1_ps(0.f);  // reset accumulator
+
+      // load zeros and scales
+      if constexpr (row == 0 && col % 2 == 0) {
+        // Bz layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=uint8
+        __m256i tmp = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(Bz + kgs * strideBz + col * 16));
+        // (w - (z - 15)) = (w - z + 15)
+        tmp = _mm256_sub_epi8(tmp, fifteen);
+        zeros[col]   = _mm256_permutexvar_epi8(idx1, tmp);
+        zeros[col+1] = _mm256_permutexvar_epi8(idx2, tmp);
+
+        // Bs layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=bf16
+        __m512i tmp2 = _mm512_loadu_si512(
+            reinterpret_cast<const __m512i*>(Bs + kgs * strideBs + col * 16));
+        scales[col]   = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 0));
+        scales[col+1] = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 1));
+      }
+    };
     auto compute = [&](auto i, int64_t k) {
       constexpr int row = i / COLS;
       constexpr int col = i % COLS;
@@ -98,6 +125,8 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
         // deinterleave and lookup to BF16
         __m256i vb_u8_lo = vb_u4 & mask;
         __m256i vb_u8_hi = _mm256_srli_epi16(vb_u4, 4) & mask;
+        vb_u8_lo = _mm256_sub_epi8(vb_u8_lo, zeros[col]);
+        vb_u8_hi = _mm256_sub_epi8(vb_u8_hi, zeros[col+1]);
         vb[col]   = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_u8_lo), bf16_lut);
         vb[col+1] = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_u8_hi), bf16_lut);
 
@@ -107,55 +136,15 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
       }
       vc[i] = _mm512_dpbf16_ps(vc[i], va, vb[col]);
     };
-    auto accumulate_group = [&](auto i, int64_t kgs) {
-      constexpr int row = i / COLS;
-      constexpr int col = i % COLS;
-
-      // (x * (w - zero) * scale).sum(-1)
-      // (x * (w - zero)).sum(-1) * scale
-      // (x * w).sum(-1) * scale - x.sum(-1) * zero * scale
-
-      if constexpr (row == 0 && col % 2 == 0) {
-        // Bs layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=bf16
-        __m512i tmp1 = _mm512_loadu_si512(
-            reinterpret_cast<const __m512i*>(Bs + kgs * strideBs + col * 16));
-        scale[col]   = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp1, 0));
-        scale[col+1] = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp1, 1));
-
-        // Bz layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=uint8
-        __m256i tmp2 = _mm256_loadu_si256(
-            reinterpret_cast<const __m256i*>(Bz + kgs * strideBz + col * 16));
-        zero_scale[col]   = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(tmp2, 0)) * scale[col];
-        zero_scale[col+1] = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(tmp2, 1)) * scale[col+1];
-      }
-      if constexpr (col == 0) {
-        va_sum = _mm512_set1_ps(A_sum[row]);
-      }
-
-      vc_master[i] = _mm512_fmadd_ps(vc[i], scale[col], vc_master[i]);
-      vc_master[i] = _mm512_fnmadd_ps(va_sum, zero_scale[col], vc_master[i]);
+    auto post_compute = [&](auto i, int64_t kgs) {
+      vc_master[i] = _mm512_fmadd_ps(vc[i], scales[i % COLS], vc_master[i]);
     };
     for (int64_t k = 0; k < K2; k += gs2) {
-      Unroll<ROWS * COLS>{}([&](auto i) { vc[i] = _mm512_set1_ps(0.f); });
-      Unroll<ROWS>{}([&](auto i) { A_sum[i] = 0.0f; });
-
+      Unroll<ROWS * COLS>{}(pre_compute, k / gs2);
       for (int64_t k_offset = 0; k_offset < gs2; ++k_offset) {
         Unroll<ROWS * COLS>{}(compute, k + k_offset);
       }
-
-      // sum of A within this group
-      // NOTE: if we do zero point subtraction when loading B, we don't need to
-      // compute A_sum
-      Unroll<ROWS>{}([&](auto row) {
-        __m512 acc = _mm512_cvtpbh_ps((__m256bh)_mm256_loadu_ps(a_ptr + row * lda2 + k));
-        for (int j = 1; j < group_size / 16; ++j) {
-          acc += _mm512_cvtpbh_ps((__m256bh)_mm256_loadu_ps(a_ptr + row * lda2 + k + j * 8));
-        }
-        __m256 tmp256 = _mm512_extractf32x8_ps(acc, 0) + _mm512_extractf32x8_ps(acc, 1);
-        __m128 tmp128 = _mm256_extractf32x4_ps(tmp256, 0) + _mm256_extractf32x4_ps(tmp256, 1);
-        A_sum[row] = (tmp128[0] + tmp128[1]) + (tmp128[2] + tmp128[3]);
-      });
-      Unroll<ROWS * COLS>{}(accumulate_group, k / gs2);
+      Unroll<ROWS * COLS>{}(post_compute, k / gs2);
     }
 
     auto storec = [&](auto i) {
