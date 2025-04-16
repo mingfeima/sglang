@@ -76,10 +76,20 @@ void bmm_cpu(at::Tensor& out, at::Tensor& mat1, at::Tensor& mat2, bool is_vnni,
     std::optional<at::Tensor>& scale);
 
 // fused moe
-at::Tensor fused_experts_cpu(at::Tensor& hidden_states, at::Tensor& w1, at::Tensor& w2,
-    at::Tensor& topk_weights, at::Tensor& topk_ids, bool inplace, bool use_int8_w8a8,
-    std::optional<at::Tensor>& w1_scale, std::optional<at::Tensor>& w2_scale,
-    std::optional<at::Tensor>& a1_scale, std::optional<at::Tensor>& a2_scale,
+at::Tensor fused_experts_cpu(
+    at::Tensor& hidden_states,
+    at::Tensor& w1,
+    at::Tensor& w2,
+    at::Tensor& topk_weights,
+    at::Tensor& topk_ids,
+    bool inplace,
+    bool use_int8_w8a8,
+    bool use_fp8_w8a16,
+    std::optional<at::Tensor>& w1_scale,
+    std::optional<at::Tensor>& w2_scale,
+    std::optional<std::vector<int64_t>> block_size,
+    std::optional<at::Tensor>& a1_scale,
+    std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
 at::Tensor shared_expert_cpu(
