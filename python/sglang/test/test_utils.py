@@ -1,8 +1,8 @@
 """Common utilities for testing and benchmarking"""
 
 import argparse
-import copy
 import asyncio
+import copy
 import os
 import random
 import subprocess
@@ -258,6 +258,7 @@ def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
         args.port = default_port.get(args.backend, None)
     return args
 
+
 def auto_detect_device() -> str:
     """Auto-detect available device platform"""
     import torch
@@ -269,6 +270,7 @@ def auto_detect_device() -> str:
     else:
         return "cpu"
 
+
 def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
     parser.add_argument("--parallel", type=int, default=64)
     parser.add_argument("--host", type=str, default="http://127.0.0.1")
@@ -279,7 +281,7 @@ def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
         type=str,
         default="auto",
         choices=["auto", "cuda", "rocm", "cpu"],
-        help="Device type (auto/cuda/rocm/cpu). Auto will detect available platforms"
+        help="Device type (auto/cuda/rocm/cpu). Auto will detect available platforms",
     )
     parser.add_argument("--result-file", type=str, default="result.jsonl")
     args = parser.parse_args()
@@ -373,7 +375,7 @@ def popen_launch_server(
     env: Optional[dict] = None,
     return_stdout_stderr: Optional[tuple] = None,
     pd_seperated: bool = False,
-    device: str = "auto"
+    device: str = "auto",
 ):
     """Launch a server process with automatic device detection.
 
@@ -599,7 +601,7 @@ def get_benchmark_args(
         lora_name=None,
         prompt_suffix="",
         pd_seperated=pd_seperated,
-        device=device
+        device=device,
     )
 
 
@@ -645,7 +647,7 @@ def run_bench_serving(
         disable_stream=disable_stream,
         disable_ignore_eos=disable_ignore_eos,
         seed=seed,
-        device=device
+        device=device,
     )
 
     try:
@@ -696,7 +698,6 @@ def run_bench_serving_multi(
 
 
 def run_bench_one_batch(model, other_args):
-
     """Launch a offline process with automatic device detection.
 
     Args:
