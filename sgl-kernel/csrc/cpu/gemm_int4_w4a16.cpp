@@ -4,6 +4,44 @@
 
 namespace {
 
+template <typename scalar_t>
+inline void copy_stub(scalar_t* __restrict__ out, const float* __restrict__ input, int64_t size) {
+  using bVec = at::vec::Vectorized<scalar_t>;
+  using fVec = at::vec::Vectorized<float>;
+  constexpr int kVecSize = bVec::size();
+
+  int64_t d;
+  #pragma GCC unroll 4
+  for (d = 0; d <= size - kVecSize; d += kVecSize) {
+    fVec data0 = fVec::loadu(input + d);
+    fVec data1 = fVec::loadu(input + d + fVec::size());
+    bVec out_vec = convert_from_float_ext<scalar_t>(data0, data1);
+    out_vec.store(out + d);
+  }
+  for (; d < size; ++d) {
+    out[d] = static_cast<scalar_t>(input[d]);
+  }
+}
+
+template <typename scalar_t>
+inline void copy_add_stub(scalar_t* __restrict__ out, const float* __restrict__ input, const float* __restrict__ bias, int64_t size) {
+  using bVec = at::vec::Vectorized<scalar_t>;
+  using fVec = at::vec::Vectorized<float>;
+  constexpr int kVecSize = bVec::size();
+
+  int64_t d;
+  #pragma GCC unroll 4
+  for (d = 0; d <= size - kVecSize; d += kVecSize) {
+    fVec data0 = fVec::loadu(input + d) + fVec::loadu(bias + d);
+    fVec data1 = fVec::loadu(input + d + fVec::size()) + fVec::loadu(bias + d + fVec::size());
+    bVec out_vec = convert_from_float_ext<scalar_t>(data0, data1);
+    out_vec.store(out + d);
+  }
+  for (; d < size; ++d) {
+    out[d] = static_cast<scalar_t>(input[d] + bias[d]);
+  }
+}
+
 template <typename scalar_t, bool has_bias, int BLOCK_M, int BLOCK_N>
 struct tinygemm_kernel_nn {
   static inline void apply(
@@ -15,23 +53,7 @@ struct tinygemm_kernel_nn {
   }
 };
 
-// convert packed 8-bit integers to packed 32-bit integers
-inline __m512 CVT_INT8_TO_FP32(__m128i x) {
-  return _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(x));
-}
-
 #if defined(CPU_CAPABILITY_AVX512)
-
-inline uint32_t f32_as_u32(float x) {
-  uint32_t tmp;
-  std::memcpy(&tmp, &x, sizeof(tmp));
-  return tmp;
-}
-inline float u32_as_f32(uint32_t x) {
-  float tmp;
-  std::memcpy(&tmp, &x, sizeof(tmp));
-  return tmp;
-}
 
 template <bool has_bias, int BLOCK_M, int BLOCK_N>
 struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
@@ -64,9 +86,9 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     __m512 scales[COLS];
     __m256i zeros[COLS * 2];
     // repeat interleave
-    __m256i idx2 = _mm256_set_epi8(31, 31, 30, 30, 29, 29, 28, 28, 27, 27, 26, 26, 25, 25, 24, 24,
+    __m256i idx1 = _mm256_set_epi8(31, 31, 30, 30, 29, 29, 28, 28, 27, 27, 26, 26, 25, 25, 24, 24,
                                    23, 23, 22, 22, 21, 21, 20, 20, 19, 19, 18, 18, 17, 17, 16, 16);
-    __m256i idx1 = _mm256_set_epi8(15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10,  9,  9,  8,  8,
+    __m256i idx0 = _mm256_set_epi8(15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10,  9,  9,  8,  8,
                                     7,  7,  6,  6,  5,  5,  4,  4,  3,  3,  2,  2,  1,  1,  0,  0);
 
     const int64_t K2 = K >> 1;
@@ -101,8 +123,8 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
             reinterpret_cast<const __m256i*>(Bz + kgs * strideBz + col * 16));
         // (w - (z - 15)) = (w - z + 15)
         tmp = _mm256_sub_epi8(tmp, fifteen);
-        zeros[col]   = _mm256_permutexvar_epi8(idx1, tmp);
-        zeros[col+1] = _mm256_permutexvar_epi8(idx2, tmp);
+        zeros[col]   = _mm256_permutexvar_epi8(idx0, tmp);
+        zeros[col+1] = _mm256_permutexvar_epi8(idx1, tmp);
 
         // Bs layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=bf16
         __m512i tmp2 = _mm512_loadu_si512(
@@ -123,12 +145,12 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
             reinterpret_cast<const __m256i*>(b_ptr + k * ldb + col * 16));
 
         // deinterleave and lookup to BF16
-        __m256i vb_u8_lo = vb_u4 & mask;
-        __m256i vb_u8_hi = _mm256_srli_epi16(vb_u4, 4) & mask;
-        vb_u8_lo = _mm256_sub_epi8(vb_u8_lo, zeros[col]);
-        vb_u8_hi = _mm256_sub_epi8(vb_u8_hi, zeros[col+1]);
-        vb[col]   = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_u8_lo), bf16_lut);
-        vb[col+1] = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_u8_hi), bf16_lut);
+        __m256i vb_i8_lo = vb_u4 & mask;
+        __m256i vb_i8_hi = _mm256_srli_epi16(vb_u4, 4) & mask;
+        vb_i8_lo = _mm256_sub_epi8(vb_i8_lo, zeros[col]);
+        vb_i8_hi = _mm256_sub_epi8(vb_i8_hi, zeros[col+1]);
+        vb[col]   = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_i8_lo), bf16_lut);
+        vb[col+1] = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_i8_hi), bf16_lut);
 
         if constexpr (PREFETCH_SIZE_K > 0) {
           _mm_prefetch(b_ptr + (k + PREFETCH_SIZE_K) * ldb2 + col * 16, _MM_HINT_T0);
@@ -168,12 +190,165 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
         K, group_size, lda, ldb, ldc, strideBz, strideBs);
 
 template <typename scalar_t, bool has_bias>
+struct brgemm {
+  static inline void apply(
+      const scalar_t* __restrict__ A,
+      const uint8_t* __restrict__ B,
+      const uint8_t* __restrict__ Bz,
+      const scalar_t* __restrict__ Bs,
+      scalar_t* __restrict__ C,
+      scalar_t* __restrict__ Btmp,
+      float* __restrict__ Ctmp,
+      const float* __restrict__ bias,
+      int64_t M,
+      int64_t N,
+      int64_t K,
+      int group_size,
+      int64_t lda,
+      int64_t ldb,
+      int64_t ldc,
+      int64_t strideBz,
+      int64_t strideBs) {
+    TORCH_CHECK(false, "struct brgemm: primary template not implemented!");
+  }
+};
+
+#if defined(CPU_CAPABILITY_AVX512)
+
+// convert packed 8-bit integers to packed 32-bit integers
+inline __m512 CVT_INT8_TO_FP32(__m128i x) {
+  return _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(x));
+}
+
+inline void unpack_B(
+  at::BFloat16* __restrict__ Btmp,
+  const uint8_t* __restrict__ packed_B,
+  const uint8_t* __restrict__ Bz,
+  const at::BFloat16* __restrict__ Bs,
+  int64_t N,
+  int64_t K,
+  int group_size,
+  int64_t ldb,
+  int64_t ldb_tmp,
+  int64_t strideBz,
+  int64_t strideBs) {
+  const int64_t K2 = K >> 1;
+  const int64_t gs2 = group_size >> 1;
+  const int64_t ldb2 = ldb; // ldb * 2 >> 1;
+  const int64_t ldb_tmp2 = ldb_tmp;
+  const uint8_t* b_ptr = packed_B;
+  float* btmp_ptr = reinterpret_cast<float *>(Btmp);
+
+  __m256i mask = _mm256_set1_epi8(0xF);  // lower 4 bit
+  __m256i zeros[2];
+  __m512 scales[4];
+  // repeat interleave
+  __m256i z_idx1 = _mm256_set_epi8(31, 31, 30, 30, 29, 29, 28, 28, 27, 27, 26, 26, 25, 25, 24, 24,
+                                   23, 23, 22, 22, 21, 21, 20, 20, 19, 19, 18, 18, 17, 17, 16, 16);
+  __m256i z_idx0 = _mm256_set_epi8(15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10,  9,  9,  8,  8,
+                                    7,  7,  6,  6,  5,  5,  4,  4,  3,  3,  2,  2,  1,  1,  0,  0);
+  __m512i s_idx1 = _mm512_set_epi32(15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10, 9, 9, 8, 8);
+  __m512i s_idx0 = _mm512_set_epi32( 7,  7,  6,  6,  5,  5,  4,  4,  3,  3,  2,  2, 1, 1, 0, 0);
+
+  for (int n = 0; n < N; n += 32) {
+    for (int k = 0; k < K2; ++k) {
+      if (k % gs2 == 0) {
+        const int kgs = k / gs2;
+
+        // Bz layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=uint8
+        __m256i tmp = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(Bz + kgs * strideBz + n));
+        zeros[0] = _mm256_permutexvar_epi8(z_idx0, tmp);
+        zeros[1] = _mm256_permutexvar_epi8(z_idx1, tmp);
+
+        // Bs layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=bf16
+        __m512i tmp2 = _mm512_loadu_si512(
+            reinterpret_cast<const __m512i*>(Bs + kgs * strideBs + n));
+        __m512 scales_lo = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 0));
+        __m512 scales_hi = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 1));
+        scales[0] = _mm512_permutexvar_ps(s_idx0, scales_lo);
+        scales[1] = _mm512_permutexvar_ps(s_idx1, scales_lo);
+        scales[2] = _mm512_permutexvar_ps(s_idx0, scales_hi);
+        scales[3] = _mm512_permutexvar_ps(s_idx1, scales_hi);
+      }
+
+      __m256i vb_u4 = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i*>(b_ptr + k * ldb2 + n));
+
+      // deinterleave and subtract zero point
+      __m256i vb_i8_lo = vb_u4 & mask;
+      __m256i vb_i8_hi = _mm256_srli_epi16(vb_u4, 4) & mask;
+      vb_i8_lo = _mm256_sub_epi8(vb_i8_lo, zeros[0]);
+      vb_i8_hi = _mm256_sub_epi8(vb_i8_hi, zeros[1]);
+
+      // convert to FP32 and apply scales
+      __m512 vb_f32_00 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_lo, 0)) * scales[0];
+      __m512 vb_f32_01 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_lo, 1)) * scales[1];
+      __m512 vb_f32_10 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_hi, 0)) * scales[2];
+      __m512 vb_f32_11 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_hi, 1)) * scales[3];
+
+      __m512bh vb_bf16_0 = _mm512_cvtne2ps_pbh(vb_f32_01, vb_f32_00);
+      __m512bh vb_bf16_1 = _mm512_cvtne2ps_pbh(vb_f32_10, vb_f32_11);
+      _mm512_storeu_si512(btmp_ptr + k * ldb_tmp2 + n, (__m512i)vb_bf16_0);
+      _mm512_storeu_si512(btmp_ptr + k * ldb_tmp2 + n + 16, (__m512i)vb_bf16_1);
+    }
+  }
+}
+
+template <bool has_bias>
+struct brgemm<at::BFloat16, has_bias> {
+  static inline void apply(
+      const at::BFloat16* __restrict__ A,
+      const uint8_t* __restrict__ B,
+      const uint8_t* __restrict__ Bz,
+      const at::BFloat16* __restrict__ Bs,
+      at::BFloat16* __restrict__ C,
+      at::BFloat16* __restrict__ Btmp,
+      float* __restrict__ Ctmp,
+      const float* __restrict__ bias,
+      int64_t M,
+      int64_t N,
+      int64_t K,
+      int group_size,
+      int64_t lda,
+      int64_t ldb,
+      int64_t ldc,
+      int64_t strideBz,
+      int64_t strideBs) {
+    constexpr int BLOCK_N = block_size_n();
+    const int ldb_tmp = BLOCK_N;
+
+    for (int64_t k = 0; k < K; k += BLOCK_K) {
+      // TODO: calculate offset for Bz and Bs
+      int64_t kb_size = std::min(static_cast<int64_t>(BLOCK_K), K - k);
+      unpack_B(Btmp, B + k * ldb, Bz, Bs, N, kb_size, group_size, ldb, ldb_tmp, strideBz, strideBs);
+
+      const bool add_C = k != 0;
+      at::native::cpublas::brgemm(
+        M, N, K, lda, ldb_tmp, BLOCK_N, add_C, A + k, Btmp, Ctmp);
+    }
+
+    // copy from Ctmp to C
+    for (int64_t m = 0; m < M; ++m) {
+      if constexpr (has_bias) {
+        copy_add_stub(C + m * ldc, Ctmp + m * BLOCK_N, bias, N);
+      } else {
+        copy_stub(C + m * ldc, Ctmp + m * BLOCK_N, N);
+      }
+    }
+  }
+};
+#endif
+
+template <typename scalar_t, bool has_bias>
 void tinygemm_kernel(
     const scalar_t* __restrict__ A,
     const uint8_t* __restrict__ B,
     scalar_t* __restrict__ C,
     const uint8_t* __restrict__ Bz,
     const scalar_t* __restrict__ Bs,
+    scalar_t* __restrict__ Btmp,
+    float* __restrict__ Ctmp,
     const float* __restrict__ bias,
     int64_t M,
     int64_t N,
@@ -183,7 +358,15 @@ void tinygemm_kernel(
     int64_t ldb,
     int64_t ldc,
     int64_t strideBz,
-    int64_t strideBs) {
+    int64_t strideBs,
+    bool brg) {
+
+  if (brg) {
+    brgemm<scalar_t, has_bias>::apply(
+      A, B, Bz, Bs, C, Btmp, Ctmp, bias, M, N, K,
+      group_size, lda, ldb, ldc, strideBz, strideBs);
+    return;
+  }
 
   constexpr int64_t BLOCK_M = 4;
   constexpr int64_t BLOCK_N = 64;
@@ -231,16 +414,22 @@ void int4_w4a16_linear_kernel_impl(
     int64_t out_strideM) {
 
   constexpr int64_t BLOCK_M = block_size_m();
-  // constexpr int64_t BLOCK_N = block_size_n();
-  constexpr int64_t BLOCK_N = 64;
+  constexpr int64_t BLOCK_N = block_size_n();
+  // constexpr int64_t BLOCK_N = 64;
   const int64_t MB = div_up(M, BLOCK_M);
   const int64_t NB = div_up(N, BLOCK_N);
+
+  // TODO: find this threshold
+  const bool use_brgemm = M > 4;
 
   // parallel on [MB, NB]
   AT_DISPATCH_BOOL(bias != nullptr, has_bias, [&] {
     at::parallel_for(0, MB * NB, 0, [&](int64_t begin, int64_t end) {
       int64_t mb{0}, nb{0};
       data_index_init(begin, mb, MB, nb, NB);
+
+      alignas(64) float Ctmp[BLOCK_M * BLOCK_N];
+      alignas(64) scalar_t Btmp[BLOCK_N * BLOCK_K];
 
       for (int64_t i = begin; i < end; ++i) {
         UNUSED(i);
@@ -250,26 +439,32 @@ void int4_w4a16_linear_kernel_impl(
         int64_t nb_size = std::min(N - nb_start, BLOCK_N);
 
         tinygemm_kernel<scalar_t, has_bias>(
-            /*   A */ x + mb_start * mat1_strideM,
-            /*   B */ w + nb_start * K / 2,  // divide by 2 since w is u4 packed in u8
-            /*   C */ out + mb_start * out_strideM + nb_start,
-            /*  Bz */ w_zeros + nb_start,
-            /*  Bs */ w_scales + nb_start,
-            /* bias*/ bias + nb_start,
-            /*   M */ mb_size,
-            /*   N */ nb_size,
-            /*   K */ K,
-            /*  gs */ group_size,
-            /* lda */ mat1_strideM,
-            /* ldb */ nb_size,
-            /* ldc */ out_strideM,
-            /* sBz */ N,
-            /* sBs */ N);
+            /*   A  */ x + mb_start * mat1_strideM,
+            /*   B  */ w + nb_start * K / 2,  // divide by 2 since w is u4 packed in u8
+            /*   C  */ out + mb_start * out_strideM + nb_start,
+            /*  Bz  */ w_zeros + nb_start,
+            /*  Bs  */ w_scales + nb_start,
+            /* Btmp */ Btmp,
+            /* Ctmp */ Ctmp,
+            /* bias */ bias + nb_start,
+            /*   M  */ mb_size,
+            /*   N  */ nb_size,
+            /*   K  */ K,
+            /*  gs  */ group_size,
+            /* lda  */ mat1_strideM,
+            /* ldb  */ nb_size,
+            /* ldc  */ out_strideM,
+            /* sBz  */ N,
+            /* sBs  */ N,
+            /* brg  */ use_brgemm);
 
         // move to the next index
         data_index_step(mb, MB, nb, NB);
       }
 
+      if (use_brgemm) {
+        at::native::cpublas::brgemm_release();
+      }
     });
   });
 }
