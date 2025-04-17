@@ -458,11 +458,6 @@ def popen_launch_server(
                     return process
             except requests.RequestException:
                 pass
-
-            return_code = process.poll()
-            if return_code is not None:
-                raise Exception(f"Server unexpectedly exits ({return_code=}).")
-
             time.sleep(10)
 
     kill_process_tree(process.pid)
@@ -493,7 +488,7 @@ def run_with_timeout(
     return ret_value[0]
 
 
-def run_unittest_files(files: List[TestFile], timeout_per_file: float):
+def run_unittest_files(files: List, timeout_per_file: float):
     tic = time.time()
     success = True
 
@@ -811,7 +806,6 @@ def run_and_check_memory_leak(
     if disable_overlap:
         other_args += ["--disable-overlap-schedule"]
 
-
     model = DEFAULT_MODEL_NAME_FOR_TEST
     port = random.randint(4000, 5000)
     base_url = f"http://127.0.0.1:{port}"
@@ -929,6 +923,7 @@ def run_mulit_request_test(
     enable_overlap=False,
     chunked_prefill_size=32,
 ):
+
     def workload_func(base_url, model):
         def run_one(_):
             prompt = """
@@ -1040,4 +1035,3 @@ def run_logprob_check(self: unittest.TestCase, arg: Tuple):
                                 rank += 1
                             else:
                                 raise
-
