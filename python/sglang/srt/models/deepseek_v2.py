@@ -202,6 +202,7 @@ class DeepseekV2MoE(nn.Module):
         self.shared_experts_down_proj = None
         self.shared_experts_is_int8 = None
         self.shared_experts_is_fp8 = None
+        self.shared_experts_weight_block_size = None
         self.experts_impl = None
         self.gate_impl = None
         self.sgl_kernel_cpu_shared_expert = (
@@ -233,6 +234,15 @@ class DeepseekV2MoE(nn.Module):
 
             if self.shared_experts_gate_up_proj.weight.dtype == torch.float8_e4m3fn:
                 assert self.shared_experts_down_proj.weight.dtype == torch.float8_e4m3fn
+
+                assert (
+                    self.shared_experts_gate_up_proj.quant_method.quant_config.weight_block_size
+                    == self.shared_experts_down_proj.quant_method.quant_config.weight_block_size
+                )
+                self.shared_experts_weight_block_size = (
+                    self.shared_experts_gate_up_proj.quant_method.quant_config.weight_block_size
+                )
+
                 self.shared_experts_is_fp8 = True
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -253,14 +263,12 @@ class DeepseekV2MoE(nn.Module):
         down_proj = self.shared_experts_down_proj
         use_intel_amx_backend = gate_up_proj.use_intel_amx_backend
         shared_experts_is_int8 = self.shared_experts_is_int8
+        shared_experts_is_fp8 = self.shared_experts_is_fp8
+        shared_experts_weight_block_size = self.shared_experts_weight_block_size
         has_shared_experts = self.n_shared_experts is not None
 
         assert use_intel_amx_backend == down_proj.use_intel_amx_backend
-        if (
-            has_shared_experts
-            and use_intel_amx_backend
-            and not self.shared_experts_is_fp8  # TODO: remove this when FP8 shared_expert is ready
-        ):
+        if has_shared_experts and use_intel_amx_backend:
             # [Note] inplace should be False in fused_experts.
             # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
             # While hidden_states is still needed in shared_expert.
@@ -272,10 +280,22 @@ class DeepseekV2MoE(nn.Module):
                 self.routed_scaling_factor,
                 inplace=True,
                 use_int8_w8a8=shared_experts_is_int8,
-                use_fp8_w8a16=False,
-                w1_scale=gate_up_proj.weight_scale if shared_experts_is_int8 else None,
-                w2_scale=down_proj.weight_scale if shared_experts_is_int8 else None,
-                block_size=None,
+                use_fp8_w8a16=shared_experts_is_fp8,
+                w1_scale=(
+                    gate_up_proj.weight_scale
+                    if shared_experts_is_int8
+                    else (
+                        gate_up_proj.weight_scale_inv if shared_experts_is_fp8 else None
+                    )
+                ),
+                w2_scale=(
+                    down_proj.weight_scale
+                    if shared_experts_is_int8
+                    else down_proj.weight_scale_inv if shared_experts_is_fp8 else None
+                ),
+                block_size=(
+                    shared_experts_weight_block_size if shared_experts_is_fp8 else None
+                ),
             )
         else:
             shared_output = None
