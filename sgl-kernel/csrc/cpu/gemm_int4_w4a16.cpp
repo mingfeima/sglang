@@ -194,9 +194,9 @@ struct brgemm {
   static inline void apply(
       const scalar_t* __restrict__ A,
       const uint8_t* __restrict__ B,
+      scalar_t* __restrict__ C,
       const uint8_t* __restrict__ Bz,
       const scalar_t* __restrict__ Bs,
-      scalar_t* __restrict__ C,
       scalar_t* __restrict__ Btmp,
       float* __restrict__ Ctmp,
       const float* __restrict__ bias,
@@ -288,7 +288,7 @@ inline void unpack_B(
       __m512 vb_f32_11 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_hi, 1)) * scales[3];
 
       __m512bh vb_bf16_0 = _mm512_cvtne2ps_pbh(vb_f32_01, vb_f32_00);
-      __m512bh vb_bf16_1 = _mm512_cvtne2ps_pbh(vb_f32_10, vb_f32_11);
+      __m512bh vb_bf16_1 = _mm512_cvtne2ps_pbh(vb_f32_11, vb_f32_10);
       _mm512_storeu_si512(btmp_ptr + k * ldb_tmp2 + n, (__m512i)vb_bf16_0);
       _mm512_storeu_si512(btmp_ptr + k * ldb_tmp2 + n + 16, (__m512i)vb_bf16_1);
     }
@@ -300,9 +300,9 @@ struct brgemm<at::BFloat16, has_bias> {
   static inline void apply(
       const at::BFloat16* __restrict__ A,
       const uint8_t* __restrict__ B,
+      at::BFloat16* __restrict__ C,
       const uint8_t* __restrict__ Bz,
       const at::BFloat16* __restrict__ Bs,
-      at::BFloat16* __restrict__ C,
       at::BFloat16* __restrict__ Btmp,
       float* __restrict__ Ctmp,
       const float* __restrict__ bias,
@@ -319,13 +319,15 @@ struct brgemm<at::BFloat16, has_bias> {
     const int ldb_tmp = BLOCK_N;
 
     for (int64_t k = 0; k < K; k += BLOCK_K) {
-      // TODO: calculate offset for Bz and Bs
       int64_t kb_size = std::min(static_cast<int64_t>(BLOCK_K), K - k);
-      unpack_B(Btmp, B + k * ldb, Bz, Bs, N, kb_size, group_size, ldb, ldb_tmp, strideBz, strideBs);
+      const int64_t kgs = k / group_size;
+
+      unpack_B(Btmp, B + (k >> 1) * ldb, Bz + kgs * strideBz, Bs + kgs * strideBs,
+               N, kb_size, group_size, ldb, ldb_tmp, strideBz, strideBs);
 
       const bool add_C = k != 0;
       at::native::cpublas::brgemm(
-        M, N, K, lda, ldb_tmp, BLOCK_N, add_C, A + k, Btmp, Ctmp);
+        M, N, kb_size, lda, ldb_tmp, BLOCK_N, add_C, A + k, Btmp, Ctmp);
     }
 
     // copy from Ctmp to C
@@ -363,7 +365,7 @@ void tinygemm_kernel(
 
   if (brg) {
     brgemm<scalar_t, has_bias>::apply(
-      A, B, Bz, Bs, C, Btmp, Ctmp, bias, M, N, K,
+      A, B, C, Bz, Bs, Btmp, Ctmp, bias, M, N, K,
       group_size, lda, ldb, ldc, strideBz, strideBs);
     return;
   }
