@@ -897,25 +897,6 @@ class Fp8MoEMethod:
         from sglang.srt.layers.moe.fused_moe_triton.fused_moe import fused_experts
         from sglang.srt.layers.moe.topk import select_experts
 
-        if layer.use_intel_amx_backend:
-            # TODO: switch to FP8 fused moe kernel when it's ready
-            return moe_forward_native(
-                layer,
-                x,
-                use_grouped_topk,
-                top_k,
-                router_logits,
-                renormalize,
-                topk_group,
-                num_expert_group,
-                custom_routing_function,
-                correction_bias,
-                activation,
-                inplace,
-                no_combine,
-                self.quant_config.weight_block_size,
-            )
-
         # Expert selection
         topk_weights, topk_ids = select_experts(
             hidden_states=x,
@@ -941,6 +922,20 @@ class Fp8MoEMethod:
                 layer.w13_weight_scale1,
                 layer.w2_weight_scale1,
                 activation=activation,
+            )
+        if layer.use_intel_amx_backend:
+            return sgl_kernel.cpu.fused_experts(
+                x,
+                layer.w13_weight,
+                layer.w2_weight,
+                topk_weights,
+                topk_ids,
+                inplace=False,  # See [Note] inplace should be False in fused_experts.
+                use_int8_w8a8=False,
+                use_fp8_w8a16=True,
+                w1_scale=layer.w13_weight_scale_inv,
+                w2_scale=layer.w2_weight_scale_inv,
+                block_size=self.quant_config.weight_block_size,
             )
         if _is_hip and get_bool_env_var("CK_MOE"):
             # TODO(CK_MOE): FP8 or FP8 block_quant only supports 'silu' for the time-being.
