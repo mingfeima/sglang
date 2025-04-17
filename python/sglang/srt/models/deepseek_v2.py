@@ -228,27 +228,28 @@ class DeepseekV2MoE(nn.Module):
             self.shared_experts_gate_up_proj = self.shared_experts.gate_up_proj
             self.shared_experts_down_proj = self.shared_experts.down_proj
 
-            # Cache whether shared_experts is int8
             # quantized models might not have .weight
-            if (
-                hasattr(self.shared_experts_gate_up_proj, "weight")
-                and self.shared_experts_gate_up_proj.weight.dtype == torch.int8
-            ):
-                assert self.shared_experts_down_proj.weight.dtype == torch.int8
-                self.shared_experts_is_int8 = True
+            if hasattr(self.shared_experts_gate_up_proj, "weight"):
+                # Cache whether shared_experts is int8/fp8
+                if self.shared_experts_gate_up_proj.weight.dtype == torch.int8:
+                    assert self.shared_experts_down_proj.weight.dtype == torch.int8
+                    self.shared_experts_is_int8 = True
 
-            if self.shared_experts_gate_up_proj.weight.dtype == torch.float8_e4m3fn:
-                assert self.shared_experts_down_proj.weight.dtype == torch.float8_e4m3fn
+                if self.shared_experts_gate_up_proj.weight.dtype == torch.float8_e4m3fn:
+                    assert (
+                        self.shared_experts_down_proj.weight.dtype
+                        == torch.float8_e4m3fn
+                    )
 
-                assert (
-                    self.shared_experts_gate_up_proj.quant_method.quant_config.weight_block_size
-                    == self.shared_experts_down_proj.quant_method.quant_config.weight_block_size
-                )
-                self.shared_experts_weight_block_size = (
-                    self.shared_experts_gate_up_proj.quant_method.quant_config.weight_block_size
-                )
+                    assert (
+                        self.shared_experts_gate_up_proj.quant_method.quant_config.weight_block_size
+                        == self.shared_experts_down_proj.quant_method.quant_config.weight_block_size
+                    )
+                    self.shared_experts_weight_block_size = (
+                        self.shared_experts_gate_up_proj.quant_method.quant_config.weight_block_size
+                    )
 
-                self.shared_experts_is_fp8 = True
+                    self.shared_experts_is_fp8 = True
 
         if self.experts.w13_weight.dtype == torch.int8:
             assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
