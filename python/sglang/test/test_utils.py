@@ -369,7 +369,7 @@ def popen_launch_server(
     base_url: str,
     timeout: float,
     api_key: Optional[str] = None,
-    other_args: list[str] = (),
+    other_args: list[str] = [],
     env: Optional[dict] = None,
     return_stdout_stderr: Optional[tuple] = None,
     pd_seperated: bool = False,
@@ -385,6 +385,7 @@ def popen_launch_server(
     if device == "auto":
         device = auto_detect_device()
         print(f"Auto-detected device: {device}", flush=True)
+        other_args = list(other_args)
         other_args += ["--device", str(device)]
 
     _, host, port = base_url.split(":")
@@ -567,7 +568,7 @@ def get_benchmark_args(
     disable_ignore_eos=False,
     seed: int = 0,
     pd_seperated: bool = False,
-    device=None,
+    device="auto",
 ):
     return SimpleNamespace(
         backend="sglang",
@@ -617,7 +618,10 @@ def run_bench_serving(
     disable_ignore_eos=False,
     need_warmup=False,
     seed: int = 0,
+    device="auto",
 ):
+    if device == "auto":
+        device = auto_detect_device()
     # Launch the server
     base_url = DEFAULT_URL_FOR_TEST
     process = popen_launch_server(
