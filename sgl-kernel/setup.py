@@ -163,6 +163,7 @@ sources = [
     "csrc/cpu/interface.cpp",
     "csrc/cpu/shm.cpp",
     "csrc/cpu/torch_extension_cpu.cpp",
+    "csrc/cpu/models/deepseek.cpp",
 ]
 cuda_sources = (
     [

@@ -1,6 +1,7 @@
 #include "common.h"
 #include "vec.h"
 #include "gemm.h"
+#include "ops.h"
 
 // we use 4x32 for BLOCK_M
 #define BLOCK_SIZE_M_SCALE 4

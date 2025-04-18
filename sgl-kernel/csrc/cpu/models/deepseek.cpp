@@ -1,0 +1,199 @@
+#include "../common.h"
+#include "../vec.h"
+#include "../ops.h"
+#include <pybind11/pybind11.h>
+#include <ATen/record_function.h>
+
+// This function implements the forward function of sglang/python/sglang/srt/layers/linear.py:RowParallelLinear
+at::Tensor row_parallel_linear_forward(
+    at::Tensor& mat1, at::Tensor& mat2,
+    std::optional<at::Tensor>& bias,
+    int tp_size,
+    int tp_rank,
+    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group,
+    std::optional<py::object> op,
+    bool use_int8_w8a8,
+    bool use_fp8_w8a16,
+    at::ScalarType out_dtype,
+    std::optional<at::Tensor>& scales2,
+    std::optional<std::vector<int64_t>> block_size,
+    bool is_vnni) {
+  RECORD_FUNCTION("sgl-kernel::row_parallel_linear_forward", std::vector<c10::IValue>({mat1, mat2}));
+  // # Only fuse bias add into GEMM for rank 0 (this ensures that
+  // # bias will not get added more than once in TP>1 case)
+  const bool has_bias = bias.has_value();
+  const float* bias_data = nullptr;
+  if (tp_rank == 0 && has_bias) {
+    bias_data = bias.value().data_ptr<float>();
+  }
+
+  at::Tensor output_parallel;
+  if (use_int8_w8a8) {
+    TORCH_CHECK(scales2.has_value(), "missing scales2 for int8 w8a8 row_parallel_linear_forward");
+    output_parallel = int8_scaled_mm_with_quant(mat1, mat2, scales2.value(), bias, out_dtype, is_vnni);
+  } else if (use_fp8_w8a16) {
+    TORCH_CHECK(scales2.has_value(), "missing scales2 for fp8 w8a16 row_parallel_linear_forward");
+    TORCH_CHECK(block_size.has_value(), "missing block_size for fp8 w8a16 row_parallel_linear_forward");
+    output_parallel = fp8_scaled_mm_cpu(mat1, mat2, scales2.value(), block_size.value(), bias, out_dtype, is_vnni);
+  } else {
+    output_parallel = weight_packed_linear(mat1, mat2, bias, is_vnni);
+  }
+
+  if (tp_size > 1) {
+    TORCH_CHECK(process_group.has_value(), "missing process_group for tp_size > 1 row_parallel_linear_forward");
+    TORCH_CHECK(op.has_value(), "missing reduce op for tp_size > 1 row_parallel_linear_forward");
+    shm_allreduce(output_parallel, process_group.value(), op.value());
+  }
+
+  return output_parallel;
+}
+
+at::Tensor forward_absorb_decode_fused_cpu(
+    at::Tensor& hidden_states, // qkv_proj_with_rope
+    at::Tensor& q_a_proj_weight, // qkv_proj_with_rope
+    at::Tensor& q_b_proj_weight, // qkv_proj_with_rope
+    at::Tensor& kv_a_proj_weight, // qkv_proj_with_rope
+    at::Tensor& w_kc, // qkv_proj_with_rope
+    at::Tensor& q_a_layernorm_weight, // qkv_proj_with_rope
+    at::Tensor& kv_a_layernorm_weight, // qkv_proj_with_rope
+    at::Tensor& positions, // qkv_proj_with_rope
+    at::Tensor& cos_sin_cache, // qkv_proj_with_rope
+    at::Tensor& k_cache, // decode_attention_cpu
+    at::Tensor& v_cache, // decode_attention_cpu
+    at::Tensor& loc, // decode_attention_cpu
+    at::Tensor& attn_logits, // decode_attention_cpu
+    at::Tensor& req_to_token, // decode_attention_cpu
+    at::Tensor& req_pool_indices, // decode_attention_cpu
+    at::Tensor& seq_lens, // decode_attention_cpu
+    at::Tensor& w_vc, // bmm
+    at::Tensor& o_proj_weight, // o_proj
+    std::optional<at::Tensor>& o_proj_bias, // o_proj
+    double eps, // qkv_proj_with_rope
+    bool use_int8_w8a8, // qkv_proj_with_rope
+    double sm_scale, // decode_attention_cpu
+    double logit_cap, // decode_attention_cpu
+    int tp_k_head_num, // decode_attention_cpu
+    int qk_head_dim, // decode_attention_cpu
+    int tp_v_head_num, // decode_attention_cpu
+    int v_head_dim, // decode_attention_cpu
+    int tp_q_head_num, // decode_attention_cpu
+    int num_local_heads, // decode_attention_cpu
+    int kv_lora_rank, // decode_attention_cpu
+    int tp_size, // o_proj
+    int tp_rank, // o_proj
+    bool o_proj_use_int8_w8a8, // o_proj
+    bool o_proj_use_fp8_w8a16, // o_proj
+    at::ScalarType o_proj_out_dtype, // o_proj
+    std::optional<at::Tensor>& q_a_proj_scale, // qkv_proj_with_rope
+    std::optional<at::Tensor>& q_b_proj_scale, // qkv_proj_with_rope
+    std::optional<at::Tensor>& kv_a_proj_scale, // qkv_proj_with_rope
+    std::optional<at::Tensor>& bmm_scale, // bmm
+    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
+    std::optional<py::object> op, // o_proj
+    std::optional<at::Tensor>& o_proj_scale, // o_proj
+    std::optional<std::vector<int64_t>> o_proj_block_size, // o_proj
+    bool is_vnni  // qkv_proj_with_rope, bmm, o_proj
+) {
+  RECORD_FUNCTION("sgl-kernel::forward_absorb_decode_fused_cpu", std::vector<c10::IValue>({
+    hidden_states, q_a_proj_weight, q_b_proj_weight, kv_a_proj_weight, w_kc,
+    q_a_layernorm_weight, kv_a_layernorm_weight, positions, cos_sin_cache,
+    k_cache, v_cache, loc, attn_logits, req_to_token, req_pool_indices,
+    seq_lens, w_vc, o_proj_weight}));
+
+  // stage 1: q_input, k_input, v_input = qkv_proj_with_rope(...)
+  at::Tensor query, key, value;
+  std::tie(query, key, value) = qkv_proj_with_rope(
+    hidden_states,
+    q_a_proj_weight,
+    q_b_proj_weight,
+    kv_a_proj_weight,
+    w_kc,
+    q_a_layernorm_weight,
+    kv_a_layernorm_weight,
+    positions,
+    cos_sin_cache,
+    eps,
+    use_int8_w8a8,
+    q_a_proj_scale,
+    q_b_proj_scale,
+    kv_a_proj_scale,
+    is_vnni);
+
+  // stage 2:
+  // attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)
+  // attn_output = attn_output.view(-1, params.num_local_heads, params.kv_lora_rank)
+
+  // stage 2.1:
+  // sglang/python/sglang/srt/layers/radix_attention.py: RadixAttention: forward
+  // For DeepSeek R1, key and value returned from qkv_proj_with_rope is 3D, thus the below code is not needed.
+  //   if k is not None:
+  //     // For cross-layer sharing, kv can be None
+  //     assert v is not None
+  //     k = k.view(-1, self.tp_k_head_num, self.qk_head_dim)
+  //     v = v.view(-1, self.tp_v_head_num, self.v_head_dim)
+  CHECK_DIM(3, key);
+  CHECK_DIM(3, value);
+
+  // stage 2.2:
+  // sglang/python/sglang/srt/layers/attention/intel_amx_backend.py: IntelAMXAttnBackend: forward_decode
+  // q = q.reshape(-1, layer.tp_q_head_num * layer.qk_head_dim)
+
+  // if layer.qk_head_dim != layer.v_head_dim:
+  //     o = q.new_empty((q.shape[0], layer.tp_q_head_num * layer.v_head_dim))
+  // else:
+  //     o = torch.empty_like(q)
+  // self.decode_attention_fwd(...)
+  query= query.reshape({-1, tp_q_head_num * qk_head_dim});
+  at::Tensor attn_output;
+  if (qk_head_dim != v_head_dim) {
+      attn_output = at::empty({query.size(0), tp_q_head_num * v_head_dim}, query.options());
+  } else {
+      attn_output = at::empty_like(query);
+  }
+  auto query_3d = query.view({-1, tp_q_head_num, qk_head_dim});
+  auto o_3d = attn_output.view({-1, tp_q_head_num, v_head_dim});
+  decode_attention_cpu(
+    query_3d,
+    k_cache,
+    v_cache,
+    o_3d,
+    key,
+    value,
+    loc,
+    attn_logits,
+    req_to_token,
+    req_pool_indices,
+    seq_lens,
+    sm_scale,
+    logit_cap);
+
+  // stage 2.3: attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
+  attn_output = attn_output.view({-1, num_local_heads, kv_lora_rank});
+
+  // stage 3: bmm
+  int64_t B = w_vc.sizes()[0];
+  int64_t N = w_vc.sizes()[1];
+  int64_t M = attn_output.sizes()[0];
+
+  at::Tensor output = at::empty({M, B * N}, attn_output.options());
+  at::Tensor attn_bmm_output = output.view({M, B, N}).transpose_(0, 1);
+
+  attn_output = attn_output.transpose(0, 1);
+  bmm_cpu(attn_bmm_output, attn_output, w_vc, is_vnni, bmm_scale);
+
+  // stage 4: o_proj
+  return row_parallel_linear_forward(
+    output,
+    o_proj_weight,
+    o_proj_bias,
+    tp_size,
+    tp_rank,
+    process_group,
+    op,
+    o_proj_use_int8_w8a8,
+    o_proj_use_fp8_w8a16,
+    o_proj_out_dtype,
+    o_proj_scale,
+    o_proj_block_size,
+    is_vnni);
+}

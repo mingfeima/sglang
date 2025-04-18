@@ -47,6 +47,54 @@ void extend_attention_cpu(at::Tensor& q_extend, at::Tensor& k_extend, at::Tensor
     at::Tensor& extend_seq_lens, at::Tensor& extend_start_loc,
     int64_t max_len_extend, double sm_scale, double logit_cap);
 
+// fused forward_absorb for decode
+at::Tensor forward_absorb_decode_fused_cpu(
+    at::Tensor& hidden_states, // qkv_proj_with_rope
+    at::Tensor& q_a_proj_weight, // qkv_proj_with_rope
+    at::Tensor& q_b_proj_weight, // qkv_proj_with_rope
+    at::Tensor& kv_a_proj_weight, // qkv_proj_with_rope
+    at::Tensor& w_kc, // qkv_proj_with_rope
+    at::Tensor& q_a_layernorm_weight, // qkv_proj_with_rope
+    at::Tensor& kv_a_layernorm_weight, // qkv_proj_with_rope
+    at::Tensor& positions, // qkv_proj_with_rope
+    at::Tensor& cos_sin_cache, // qkv_proj_with_rope
+    at::Tensor& k_cache, // decode_attention_cpu
+    at::Tensor& v_cache, // decode_attention_cpu
+    at::Tensor& loc, // decode_attention_cpu
+    at::Tensor& attn_logits, // decode_attention_cpu
+    at::Tensor& req_to_token, // decode_attention_cpu
+    at::Tensor& req_pool_indices, // decode_attention_cpu
+    at::Tensor& seq_lens, // decode_attention_cpu
+    at::Tensor& w_vc, // bmm
+    at::Tensor& o_proj_weight, // o_proj
+    std::optional<at::Tensor>& o_proj_bias, // o_proj
+    double eps, // qkv_proj_with_rope
+    bool use_int8_w8a8, // qkv_proj_with_rope
+    double sm_scale, // decode_attention_cpu
+    double logit_cap, // decode_attention_cpu
+    int tp_k_head_num, // decode_attention_cpu
+    int qk_head_dim, // decode_attention_cpu
+    int tp_v_head_num, // decode_attention_cpu
+    int v_head_dim, // decode_attention_cpu
+    int tp_q_head_num, // decode_attention_cpu
+    int num_local_heads, // decode_attention_cpu
+    int kv_lora_rank, // decode_attention_cpu
+    int tp_size, // o_proj
+    int tp_rank, // o_proj
+    bool o_proj_use_int8_w8a8, // o_proj
+    bool o_proj_use_fp8_w8a16, // o_proj
+    at::ScalarType o_proj_out_dtype, // o_proj
+    std::optional<at::Tensor>& q_a_proj_scale, // qkv_proj_with_rope
+    std::optional<at::Tensor>& q_b_proj_scale, // qkv_proj_with_rope
+    std::optional<at::Tensor>& kv_a_proj_scale, // qkv_proj_with_rope
+    std::optional<at::Tensor>& bmm_scale, // bmm
+    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
+    std::optional<py::object> op, // o_proj
+    std::optional<at::Tensor>& o_proj_scale, // o_proj
+    std::optional<std::vector<int64_t>> o_proj_block_size, // o_proj
+    bool is_vnni  // qkv_proj_with_rope, bmm, o_proj
+);
+
 // weight prepack
 at::Tensor convert_weight_packed(at::Tensor& weight);
 
@@ -148,6 +196,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   // extend
   m.def("extend_attention_cpu", &extend_attention_cpu, "Attention extend for CPU");
+
+  // fused forward_absorb for decode
+  m.def("forward_absorb_decode_fused_cpu", &forward_absorb_decode_fused_cpu, "fused forward_absorb for intel AMX");
 
   // weight prepack
   m.def("convert_weight_packed", &convert_weight_packed, "prepack weight to vnni format for intel AMX");
