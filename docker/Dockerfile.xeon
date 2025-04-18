@@ -1,8 +1,8 @@
 FROM ubuntu:24.04
 SHELL ["/bin/bash", "-c"]
 
-RUN if [ -f /etc/apt/apt.conf.d/proxy.conf ]; then rm /etc/apt/apt.conf.d/proxy.conf; fi && \
-    if [ ! -z ${HTTPS_PROXY} ]; then echo "Acquire::https::Proxy \"${HTTPS_PROXY}\";" >> /etc/apt/apt.conf.d/proxy.conf; fi
+ARG VER_SGLANG=cpu_opt_ww11
+
 RUN apt-get update && \
     apt-get full-upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
@@ -39,7 +39,7 @@ RUN git clone https://github.com/vllm-project/vllm.git && \
     cd ..
 RUN git clone https://github.com/mingfeima/sglang.git && \
     cd sglang && \
-    git checkout cpu_opt_ww11 && \
+    git checkout ${VER_SGLANG} && \
     pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu --force-reinstall && \
     pip install -e "python[all_cpu]" && \
     cd sgl-kernel && \
