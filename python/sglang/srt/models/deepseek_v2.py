@@ -784,12 +784,10 @@ class DeepseekV2AttentionMLA(nn.Module):
         self.qkv_proj_with_rope_is_int8 = None
         self.qkv_proj_with_rope_is_fp8 = None
         self.weight_block_size = None
-        if self.q_lora_rank is not None:
-            # quantized models might not have .weight
-            if (
-                hasattr(self.q_a_proj, "weight")
-                and self.q_a_proj.weight.dtype == torch.int8
-            ):
+
+        # quantized models might not have .weight
+        if self.q_lora_rank is not None and hasattr(self.q_a_proj, "weight"):
+            if self.q_a_proj.weight.dtype == torch.int8:
                 assert (
                     self.q_a_proj.weight.dtype
                     == self.q_b_proj.weight.dtype
