@@ -267,6 +267,8 @@ def auto_detect_device() -> str:
         return "cuda"
     elif hasattr(torch.version, "hip") and torch.version.hip:
         return "rocm"
+    elif hasattr(torch, 'xpu') and torch.xpu.is_available():  # Check for Intel XPU
+        return "xpu"
     else:
         return "cpu"
 
