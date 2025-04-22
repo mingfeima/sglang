@@ -154,6 +154,87 @@ void segment_gemm_kernel_impl(
   });
 }
 
+
+// [C0, C1] = A @ [B0, B1]
+template <typename scalar_t>
+void segment_gemm_kernel_impl(
+    scalar_t* __restrict__ C0,
+    scalar_t* __restrict__ C1,
+    const scalar_t* __restrict__ A,
+    const at::Float8_e4m3fn* __restrict__ B0,
+    const at::Float8_e4m3fn* __restrict__ B1,
+    const float* __restrict__ Bs0,
+    const float* __restrict__ Bs1,
+    int64_t M,
+    int64_t N0,
+    int64_t N1,
+    int64_t K,
+    int64_t block_size_N,
+    int64_t block_size_K) {
+  constexpr int64_t BLOCK_M = block_size_m();
+  constexpr int64_t BLOCK_N = block_size_n();
+  const int64_t MB = div_up(M, BLOCK_M);
+  const int64_t NB0 = div_up(N0, BLOCK_N);
+  const int64_t NB1 = div_up(N1, BLOCK_N);
+  const int64_t NB = NB0 + NB1;
+
+  const int64_t scale_size_K = div_up(K, block_size_K);
+  const int64_t blocks_n_per_group = block_size_N / BLOCK_N;
+
+  const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(M);
+
+  // parallel on [MB, NB0 + NB1]
+  at::parallel_for(0, MB * NB, 0, [&](int64_t begin, int64_t end) {
+    int64_t mb{0}, nb{0};
+    data_index_init(begin, mb, MB, nb, NB);
+
+    // for brgemm, use float32 for accumulate
+    alignas(64) float Ctmp[BLOCK_M * BLOCK_N];
+    // for brgemm when mat2 is float8_e4m3
+    alignas(64) scalar_t Btmp[BLOCK_N * BLOCK_K];
+
+    for (int64_t i = begin; i < end; ++i) {
+      UNUSED(i);
+
+      int mb_start = mb * BLOCK_M;
+      int mb_size = std::min(M - mb_start, BLOCK_M);
+      int nb_start = nb * BLOCK_N;
+      int nb_size = BLOCK_N;
+
+      const at::Float8_e4m3fn* __restrict__ B = nb < NB0 ? B0 : B1;
+      const float* __restrict__ Bs = nb < NB0 ? Bs0 : Bs1;
+      scalar_t* __restrict__ C = nb < NB0 ? C0 : C1;
+      int64_t ldc = nb < NB0 ? N0 : N1;
+      int64_t local_nb_start = nb < NB0 ? nb_start : nb_start - N0;
+      int64_t new_nb = nb < NB0 ? nb : nb - NB0;
+
+      tinygemm_kernel<scalar_t>(
+          /*   A */ A + mb_start * K,
+          /*   B */ B + local_nb_start * K /* nb * BLOCK_N * K */,
+          /*   C */ C + mb_start * ldc + local_nb_start,
+          /* Btmp*/ Btmp,
+          /* Ctmp*/ Ctmp,
+          /*  Bs */ Bs + (new_nb / blocks_n_per_group) * scale_size_K,
+          /*   M */ mb_size,
+          /*   N */ nb_size,
+          /*   K */ K,
+          /* lda */ K,
+          /* ldb */ nb_size,
+          /* ldc */ ldc,
+          /* brg */ use_brgemm,
+          /* block_size_K */ block_size_K);
+
+      // move to the next index
+      data_index_step(mb, MB, nb, NB);
+    }
+
+    if (use_brgemm) {
+      at::native::cpublas::brgemm_release();
+    }
+  });
+}
+
+
 template <typename scalar_t>
 inline float reduce(const scalar_t* __restrict__ x, int64_t size) {
   using bVec = at::vec::Vectorized<scalar_t>;
@@ -454,23 +535,22 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
           kv_lora_rank + qk_rope_head_dim,
           hidden_size);
     } else if (use_fp8_w8a16) {
-      qa = fp8_scaled_mm_cpu(
-          hidden_states,
-          q_a_proj_weight,
-          q_a_proj_scale.value(),
-          block_size.value(),
-          bias,
-          at::kBFloat16,
-          is_vnni);
-      k_input = fp8_scaled_mm_cpu(
-          hidden_states,
-          kv_a_proj_weight,
-          kv_a_proj_scale.value(),
-          block_size.value(),
-          bias,
-          at::kBFloat16,
-          is_vnni);
-      v_input = k_input.narrow(-1, 0, kv_lora_rank);
+      int64_t block_size_N = block_size.value()[0];
+      int64_t block_size_K = block_size.value()[1];
+      segment_gemm_kernel_impl<scalar_t>(
+          qa.data_ptr<scalar_t>(),
+          k_input.data_ptr<scalar_t>(),
+          hidden_states.data_ptr<scalar_t>(),
+          q_a_proj_weight.data_ptr<at::Float8_e4m3fn>(),
+          kv_a_proj_weight.data_ptr<at::Float8_e4m3fn>(),
+          q_a_proj_scale.value().data_ptr<float>(),
+          kv_a_proj_scale.value().data_ptr<float>(),
+          num_seqs,
+          q_lora_rank,
+          kv_lora_rank + qk_rope_head_dim,
+          hidden_size,
+          block_size_N,
+          block_size_K);
     } else {
       segment_gemm_kernel_impl<scalar_t>(
           qa.data_ptr<scalar_t>(),
