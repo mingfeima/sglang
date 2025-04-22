@@ -17,7 +17,7 @@
 """Inference-only DeepseekV2 model."""
 
 import os
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple, List
 
 import torch
 import torch.nn.functional as F
@@ -484,8 +484,10 @@ class MParams:
         self.kv_a_layernorm: Optional[nn.Module] = None
         self.rotary_emb: Optional[nn.Module] = None
         self.qkv_proj_with_rope_is_int8: Optional[bool] = None
+        self.qkv_proj_with_rope_is_fp8: Optional[bool] = None
         self.num_local_heads: Optional[int] = None
         self.kv_lora_rank: Optional[int] = None
+        self.weight_block_size: Optional[List[int]] = None
 
 
 class DeepseekV2AttentionMLA(nn.Module):
@@ -672,6 +674,7 @@ class DeepseekV2AttentionMLA(nn.Module):
 
         self.qkv_proj_with_rope_is_int8 = None
         self.qkv_proj_with_rope_is_fp8 = None
+        self.weight_block_size = None
         if self.q_lora_rank is not None:
             # quantized models might not have .weight
             if (
@@ -690,6 +693,14 @@ class DeepseekV2AttentionMLA(nn.Module):
                     == self.q_b_proj.weight.dtype
                     == self.kv_a_proj_with_mqa.weight.dtype
                 )
+                assert (
+                    self.q_a_proj.quant_method.quant_config.weight_block_size
+                    == self.q_b_proj.quant_method.quant_config.weight_block_size
+                    == self.kv_a_proj_with_mqa.quant_method.quant_config.weight_block_size
+                )
+                self.weight_block_size = (
+                    self.q_a_proj.quant_method.quant_config.weight_block_size
+                )
                 self.qkv_proj_with_rope_is_fp8 = True
 
         params = MParams()
@@ -702,8 +713,10 @@ class DeepseekV2AttentionMLA(nn.Module):
         params.kv_a_layernorm = self.kv_a_layernorm
         params.rotary_emb = self.rotary_emb
         params.qkv_proj_with_rope_is_int8 = self.qkv_proj_with_rope_is_int8
+        params.qkv_proj_with_rope_is_fp8 = self.qkv_proj_with_rope_is_fp8
         params.num_local_heads = self.num_local_heads
         params.kv_lora_rank = self.kv_lora_rank
+        params.weight_block_size = self.weight_block_size
         self.params = params
 
     def forward(
@@ -746,11 +759,7 @@ class DeepseekV2AttentionMLA(nn.Module):
                 else:
                     return self.forward_absorb(positions, hidden_states, forward_batch)
             else:
-                if (
-                    self.q_lora_rank is not None
-                    and self.use_intel_amx_backend
-                    and not self.qkv_proj_with_rope_is_fp8  # TODO: remove this when forward_absorb_fused_mla_rope_cpu is ready
-                ):
+                if self.q_lora_rank is not None and self.use_intel_amx_backend:
                     return self.forward_absorb_fused_mla_rope_cpu(
                         positions, hidden_states, forward_batch
                     )
@@ -1069,20 +1078,36 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.rotary_emb.cos_sin_cache,
             params.kv_a_layernorm.variance_epsilon,
             use_int8_w8a8=params.qkv_proj_with_rope_is_int8,
+            use_fp8_w8a16=params.qkv_proj_with_rope_is_fp8,
             q_a_proj_scale=(
                 params.q_a_proj.weight_scale
                 if params.qkv_proj_with_rope_is_int8
-                else None
+                else (
+                    params.q_a_proj.weight_scale_inv
+                    if params.qkv_proj_with_rope_is_fp8
+                    else None
+                )
             ),
             q_b_proj_scale=(
                 params.q_b_proj.weight_scale
                 if params.qkv_proj_with_rope_is_int8
-                else None
+                else (
+                    params.q_b_proj.weight_scale_inv
+                    if params.qkv_proj_with_rope_is_fp8
+                    else None
+                )
             ),
             kv_a_proj_scale=(
                 params.kv_a_proj_with_mqa.weight_scale
                 if params.qkv_proj_with_rope_is_int8
-                else None
+                else (
+                    params.kv_a_proj_with_mqa.weight_scale_inv
+                    if params.qkv_proj_with_rope_is_fp8
+                    else None
+                )
+            ),
+            weight_block_size=(
+                params.weight_block_size if params.qkv_proj_with_rope_is_fp8 else None
             ),
         )
         attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)

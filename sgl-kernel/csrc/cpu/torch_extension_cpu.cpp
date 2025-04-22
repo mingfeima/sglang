@@ -112,9 +112,9 @@ at::Tensor shared_expert_cpu(
 std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope( at::Tensor& hidden_states,
     at::Tensor& q_a_proj_weight, at::Tensor& q_b_proj_weight, at::Tensor& kv_a_proj_weight,
     at::Tensor& w_kc, at::Tensor& q_a_layernorm_weight, at::Tensor& kv_a_layernorm_weight,
-    at::Tensor& positions, at::Tensor& cos_sin_cache, double eps, bool use_int8_w8a8,
+    at::Tensor& positions, at::Tensor& cos_sin_cache, double eps, bool use_int8_w8a8, bool use_fp8_w8a16,
     std::optional<at::Tensor>& q_a_proj_scale, std::optional<at::Tensor>& q_b_proj_scale,
-    std::optional<at::Tensor>& kv_a_proj_scale, bool is_vnni);
+    std::optional<at::Tensor>& kv_a_proj_scale, bool is_vnni, std::optional<std::vector<int64_t>> block_size);
 
 // shared memory init
 void initialize(int size, int rank);

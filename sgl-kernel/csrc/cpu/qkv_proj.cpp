@@ -352,10 +352,12 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
     at::Tensor& cos_sin_cache,
     double eps,
     bool use_int8_w8a8,
+    bool use_fp8_w8a16,
     std::optional<at::Tensor>& q_a_proj_scale,
     std::optional<at::Tensor>& q_b_proj_scale,
     std::optional<at::Tensor>& kv_a_proj_scale,
-    bool is_vnni) {
+    bool is_vnni,
+    std::optional<std::vector<int64_t>> block_size) {
 
   RECORD_FUNCTION("sgl-kernel::qkv_proj_with_rope", std::vector<c10::IValue>({
       hidden_states, q_a_proj_weight, q_b_proj_weight, kv_a_proj_weight, w_kc}));
@@ -412,6 +414,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
 
   // outputs of q_a_proj and q_b_proj
   auto qa = at::empty({num_seqs, q_lora_rank}, options);
+  std::optional<at::Tensor> bias;
 
   // stage 1: q_a_proj and kv_a_proj
   AT_DISPATCH_REDUCED_FLOATING_TYPES(st, "qkv_proj_kernel_impl", [&] {
@@ -450,6 +453,24 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
           q_lora_rank,
           kv_lora_rank + qk_rope_head_dim,
           hidden_size);
+    } else if (use_fp8_w8a16) {
+      qa = fp8_scaled_mm_cpu(
+          hidden_states,
+          q_a_proj_weight,
+          q_a_proj_scale.value(),
+          block_size.value(),
+          bias,
+          at::kBFloat16,
+          is_vnni);
+      k_input = fp8_scaled_mm_cpu(
+          hidden_states,
+          kv_a_proj_weight,
+          kv_a_proj_scale.value(),
+          block_size.value(),
+          bias,
+          at::kBFloat16,
+          is_vnni);
+      v_input = k_input.narrow(-1, 0, kv_lora_rank);
     } else {
       segment_gemm_kernel_impl<scalar_t>(
           qa.data_ptr<scalar_t>(),
@@ -480,9 +501,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
 
   // stage 3: q_b_proj
   at::Tensor qb;
-  std::optional<at::Tensor> bias;
   if (use_int8_w8a8) {
     qb = int8_scaled_mm_with_quant(qa, q_b_proj_weight, q_b_proj_scale.value(), bias, at::kBFloat16, is_vnni);
+  } else if (use_fp8_w8a16) {
+    qb = fp8_scaled_mm_cpu(qa, q_b_proj_weight, q_b_proj_scale.value(), block_size.value(), bias, at::kBFloat16, is_vnni);
   } else {
     qb = weight_packed_linear(qa, q_b_proj_weight, bias, is_vnni);
   }

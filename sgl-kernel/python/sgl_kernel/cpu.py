@@ -86,10 +86,12 @@ def qkv_proj_with_rope(
     cos_sin_cache,
     eps,
     use_int8_w8a8=False,
+    use_fp8_w8a16=False,
     q_a_proj_scale=None,
     q_b_proj_scale=None,
     kv_a_proj_scale=None,
     is_vnni=True,
+    weight_block_size=None,
 ):
     return sgl_kernel.common_ops.qkv_proj_with_rope(
         hidden_states,
@@ -103,10 +105,12 @@ def qkv_proj_with_rope(
         cos_sin_cache,
         eps,
         use_int8_w8a8,
+        use_fp8_w8a16,
         q_a_proj_scale,
         q_b_proj_scale,
         kv_a_proj_scale,
         is_vnni,
+        weight_block_size,
     )
 
 
