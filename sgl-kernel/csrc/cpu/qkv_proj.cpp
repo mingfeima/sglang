@@ -154,7 +154,6 @@ void segment_gemm_kernel_impl(
   });
 }
 
-
 // [C0, C1] = A @ [B0, B1]
 template <typename scalar_t>
 void segment_gemm_kernel_impl(
@@ -165,12 +164,14 @@ void segment_gemm_kernel_impl(
     const at::Float8_e4m3fn* __restrict__ B1,
     const float* __restrict__ Bs0,
     const float* __restrict__ Bs1,
+    scalar_t* __restrict__ Btmp,
     int64_t M,
     int64_t N0,
     int64_t N1,
     int64_t K,
     int64_t block_size_N,
     int64_t block_size_K) {
+
   constexpr int64_t BLOCK_M = block_size_m();
   constexpr int64_t BLOCK_N = block_size_n();
   const int64_t MB = div_up(M, BLOCK_M);
@@ -188,10 +189,9 @@ void segment_gemm_kernel_impl(
     int64_t mb{0}, nb{0};
     data_index_init(begin, mb, MB, nb, NB);
 
+    int tid = at::get_thread_num();
     // for brgemm, use float32 for accumulate
     alignas(64) float Ctmp[BLOCK_M * BLOCK_N];
-    // for brgemm when mat2 is float8_e4m3
-    alignas(64) scalar_t Btmp[BLOCK_N * BLOCK_K];
 
     for (int64_t i = begin; i < end; ++i) {
       UNUSED(i);
@@ -212,7 +212,7 @@ void segment_gemm_kernel_impl(
           /*   A */ A + mb_start * K,
           /*   B */ B + local_nb_start * K /* nb * BLOCK_N * K */,
           /*   C */ C + mb_start * ldc + local_nb_start,
-          /* Btmp*/ Btmp,
+          /* Btmp*/ Btmp + tid * BLOCK_N * K,
           /* Ctmp*/ Ctmp,
           /*  Bs */ Bs + (new_nb / blocks_n_per_group) * scale_size_K,
           /*   M */ mb_size,
@@ -233,7 +233,6 @@ void segment_gemm_kernel_impl(
     }
   });
 }
-
 
 template <typename scalar_t>
 inline float reduce(const scalar_t* __restrict__ x, int64_t size) {
@@ -552,7 +551,11 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
       CHECK_EQ(q_a_proj_s.size(1), div_up(hidden_size, block_size_K));
       CHECK_EQ(kv_a_proj_s.size(0), div_up(kv_lora_rank + qk_rope_head_dim, block_size_N));
       CHECK_EQ(kv_a_proj_s.size(1), div_up(hidden_size, block_size_K));
-    segment_gemm_kernel_impl<scalar_t>(
+
+      const int BLOCK_N = block_size_n();
+      const int num_threads = at::get_num_threads();
+      auto buffer  = at::empty({num_threads, BLOCK_N * hidden_size}, options);
+      segment_gemm_kernel_impl<scalar_t>(
           qa.data_ptr<scalar_t>(),
           k_input.data_ptr<scalar_t>(),
           hidden_states.data_ptr<scalar_t>(),
@@ -560,6 +563,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
           kv_a_proj_weight.data_ptr<at::Float8_e4m3fn>(),
           q_a_proj_s.data_ptr<float>(),
           kv_a_proj_s.data_ptr<float>(),
+          buffer.data_ptr<scalar_t>(),
           num_seqs,
           q_lora_rank,
           kv_lora_rank + qk_rope_head_dim,
