@@ -1237,7 +1237,7 @@ at::Tensor shared_expert_cpu(
   // for fp8 w8a16:
   //   5. intermediate_cache0 : [M, 2N]
   //
-  int num_threads = at::get_num_threads();
+  int64_t num_threads = at::get_num_threads();
   int64_t buffer_size_nbytes = M * N * 2 + num_threads * 2 * BLOCK_M * BLOCK_N * sizeof(float);
 
   if (use_int8_w8a8) {
@@ -1246,11 +1246,14 @@ at::Tensor shared_expert_cpu(
   if (use_fp8_w8a16) {
     buffer_size_nbytes += M * 2 * N * 2;
   }
-
+  // int spiltk_num = 4;
+  int spiltk = split_k_num();
   auto buffer = at::empty({buffer_size_nbytes}, hidden_states.options().dtype(at::kChar));
+  auto buffer_splitk = at::empty({spiltk * 2 * M * N + num_threads * 2 * BLOCK_M * BLOCK_N}, hidden_states.options().dtype(at::kFloat));
   AT_DISPATCH_REDUCED_FLOATING_TYPES(st, "share_experts_kernel_impl", [&] {
     scalar_t* __restrict__ intermediate_cache1 = (scalar_t*)((void*)(buffer.data_ptr<int8_t>()));
     float* __restrict__ C_tmp = (float*)((void*)(intermediate_cache1 + M * N));
+    float* __restrict__ C_spiltk_tmp = (float*)buffer_splitk.data_ptr<float>();
 
     if (use_int8_w8a8) {
       uint8_t* __restrict__ Aq_tmp = (uint8_t*)((void*)(C_tmp + num_threads * 2 * BLOCK_M * BLOCK_N));
@@ -1265,6 +1268,7 @@ at::Tensor shared_expert_cpu(
           out_hidden_states.data_ptr<scalar_t>(),
           intermediate_cache1,
           C_tmp,
+          C_spiltk_tmp,
           Aq_tmp,
           As_tmp,
           hidden_states.data_ptr<scalar_t>(),
