@@ -26,10 +26,12 @@ extern std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
     at::Tensor& cos_sin_cache,
     double eps,
     bool use_int8_w8a8,
+    bool use_fp8_w8a16,
     std::optional<at::Tensor>& q_a_proj_scale,
     std::optional<at::Tensor>& q_b_proj_scale,
     std::optional<at::Tensor>& kv_a_proj_scale,
-    bool is_vnni);
+    bool is_vnni,
+    std::optional<std::vector<int64_t>> block_size);
 
 extern at::Tensor weight_packed_linear(at::Tensor& mat1, at::Tensor& mat2,
     std::optional<at::Tensor>& bias, bool is_vnni);
@@ -109,6 +111,7 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<at::Tensor>& o_proj_bias, // o_proj
     double eps, // qkv_proj_with_rope
     bool use_int8_w8a8, // qkv_proj_with_rope
+    bool use_fp8_w8a16, // qkv_proj_with_rope
     double sm_scale, // decode_attention_cpu
     double logit_cap, // decode_attention_cpu
     int tp_k_head_num, // decode_attention_cpu
@@ -126,6 +129,7 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<at::Tensor>& q_a_proj_scale, // qkv_proj_with_rope
     std::optional<at::Tensor>& q_b_proj_scale, // qkv_proj_with_rope
     std::optional<at::Tensor>& kv_a_proj_scale, // qkv_proj_with_rope
+    std::optional<std::vector<int64_t>> block_size, // qkv_proj_with_rope
     std::optional<at::Tensor>& bmm_scale, // bmm
     std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
     std::optional<py::object> op, // o_proj
@@ -153,10 +157,12 @@ at::Tensor forward_absorb_decode_fused_cpu(
     cos_sin_cache,
     eps,
     use_int8_w8a8,
+    use_fp8_w8a16,
     q_a_proj_scale,
     q_b_proj_scale,
     kv_a_proj_scale,
-    is_vnni);
+    is_vnni,
+    block_size);
 
   // stage 2:
   // attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)

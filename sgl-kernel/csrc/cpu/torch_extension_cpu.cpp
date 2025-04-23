@@ -70,6 +70,7 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<at::Tensor>& o_proj_bias, // o_proj
     double eps, // qkv_proj_with_rope
     bool use_int8_w8a8, // qkv_proj_with_rope
+    bool use_fp8_w8a16, // qkv_proj_with_rope
     double sm_scale, // decode_attention_cpu
     double logit_cap, // decode_attention_cpu
     int tp_k_head_num, // decode_attention_cpu
@@ -87,6 +88,7 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<at::Tensor>& q_a_proj_scale, // qkv_proj_with_rope
     std::optional<at::Tensor>& q_b_proj_scale, // qkv_proj_with_rope
     std::optional<at::Tensor>& kv_a_proj_scale, // qkv_proj_with_rope
+    std::optional<std::vector<int64_t>> block_size, // qkv_proj_with_rope
     std::optional<at::Tensor>& bmm_scale, // bmm
     std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
     std::optional<py::object> op, // o_proj

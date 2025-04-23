@@ -726,19 +726,31 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.q_a_proj_weight_scale = (
                 params.q_a_proj.weight_scale
                 if self.qkv_proj_with_rope_is_int8
-                else None
+                else (
+                    params.q_a_proj.weight_scale_inv
+                    if self.qkv_proj_with_rope_is_fp8
+                    else None
+                )
             )
             params.q_b_proj_weight_scale = (
                 params.q_b_proj.weight_scale
                 if self.qkv_proj_with_rope_is_int8
-                else None
+                else (
+                    params.q_b_proj.weight_scale_inv
+                    if self.qkv_proj_with_rope_is_fp8
+                    else None
+                )
             )
 
         params.kv_a_proj_with_mqa = self.kv_a_proj_with_mqa
         params.kv_a_proj_with_mqa_weight_scale = (
             params.kv_a_proj_with_mqa.weight_scale
             if self.qkv_proj_with_rope_is_int8
-            else None
+            else (
+                params.kv_a_proj_with_mqa.weight_scale_inv
+                if self.qkv_proj_with_rope_is_fp8
+                else None
+            )
         )
         params.kv_a_layernorm = self.kv_a_layernorm
         params.rotary_emb = self.rotary_emb
@@ -746,7 +758,9 @@ class DeepseekV2AttentionMLA(nn.Module):
         params.qkv_proj_with_rope_is_fp8 = self.qkv_proj_with_rope_is_fp8
         params.num_local_heads = self.num_local_heads
         params.kv_lora_rank = self.kv_lora_rank
-        params.weight_block_size = self.weight_block_size
+        params.weight_block_size = (
+            self.weight_block_size if params.qkv_proj_with_rope_is_fp8 else None
+        )
 
         params.attn_mqa_layer_id = self.attn_mqa.layer_id
         params.attn_mqa_scaling = self.attn_mqa.scaling
@@ -1140,36 +1154,10 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.kv_a_layernorm.variance_epsilon,
             use_int8_w8a8=params.qkv_proj_with_rope_is_int8,
             use_fp8_w8a16=params.qkv_proj_with_rope_is_fp8,
-            q_a_proj_scale=(
-                params.q_a_proj.weight_scale
-                if params.qkv_proj_with_rope_is_int8
-                else (
-                    params.q_a_proj.weight_scale_inv
-                    if params.qkv_proj_with_rope_is_fp8
-                    else None
-                )
-            ),
-            q_b_proj_scale=(
-                params.q_b_proj.weight_scale
-                if params.qkv_proj_with_rope_is_int8
-                else (
-                    params.q_b_proj.weight_scale_inv
-                    if params.qkv_proj_with_rope_is_fp8
-                    else None
-                )
-            ),
-            kv_a_proj_scale=(
-                params.kv_a_proj_with_mqa.weight_scale
-                if params.qkv_proj_with_rope_is_int8
-                else (
-                    params.kv_a_proj_with_mqa.weight_scale_inv
-                    if params.qkv_proj_with_rope_is_fp8
-                    else None
-                )
-            ),
-            weight_block_size=(
-                params.weight_block_size if params.qkv_proj_with_rope_is_fp8 else None
-            ),
+            q_a_proj_scale=params.q_a_proj_weight_scale,
+            q_b_proj_scale=params.q_b_proj_weight_scale,
+            kv_a_proj_scale=params.kv_a_proj_with_mqa_weight_scale,
+            weight_block_size=params.weight_block_size,
         )
         attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)
         attn_output = attn_output.view(-1, params.num_local_heads, params.kv_lora_rank)
@@ -1241,6 +1229,7 @@ class DeepseekV2AttentionMLA(nn.Module):
             self.o_proj.bias,
             params.kv_a_layernorm.variance_epsilon,
             params.qkv_proj_with_rope_is_int8,
+            params.qkv_proj_with_rope_is_fp8,
             params.attn_mqa_scaling,
             params.attn_mqa_logit_cap,
             params.attn_mqa_tp_k_head_num,
@@ -1258,6 +1247,7 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.q_a_proj_weight_scale,
             params.q_b_proj_weight_scale,
             params.kv_a_proj_with_mqa_weight_scale,
+            params.weight_block_size,
             None,  # bmm_scale
             params.device_group,
             params.reduce_op,
