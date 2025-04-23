@@ -410,6 +410,9 @@ extern at::Tensor int8_scaled_mm_with_quant(at::Tensor& mat1, at::Tensor& mat2, 
 extern void bmm_cpu(at::Tensor& out, at::Tensor& mat1, at::Tensor& mat2, bool is_vnni,
     std::optional<at::Tensor>& scale);
 
+extern at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& scales2,
+    std::vector<int64_t> block_size, std::optional<at::Tensor>& bias, at::ScalarType out_dtype, bool is_vnni);
+
 
 // NB: shapes in DeepDeek R1
 //

@@ -177,15 +177,6 @@ void tinygemm_kernel(
     bool brg,
     int64_t block_size_K);
 
-at::Tensor fp8_scaled_mm_cpu(
-    at::Tensor& mat1,
-    at::Tensor& mat2,
-    at::Tensor& scales2,
-    std::vector<int64_t> block_size,
-    std::optional<at::Tensor>& bias,
-    at::ScalarType out_dtype,
-    bool is_vnni);
-
 // TODO: debug print, remove me later
 inline void print_16x32i(const __m512i x) {
   int32_t a[16];
