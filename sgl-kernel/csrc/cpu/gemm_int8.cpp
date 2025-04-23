@@ -1,7 +1,6 @@
 #include "common.h"
 #include "vec.h"
 #include "gemm.h"
-#include "ops.h"
 
 namespace {
 
