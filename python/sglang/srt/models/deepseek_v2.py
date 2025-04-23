@@ -17,7 +17,7 @@
 """Inference-only DeepseekV2 model."""
 
 import os
-from typing import Any, Dict, Iterable, Optional, Tuple, List
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
