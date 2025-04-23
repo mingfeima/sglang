@@ -196,6 +196,11 @@ class DeepseekV2MoE(nn.Module):
             prefix=add_prefix("experts", prefix),
         )
 
+        # TODO: cache attr in MParams() like what we did in DeepseekV2AttentionMLA
+        self.experts_is_int8 = None
+        self.experts_is_fp8 = None
+        self.experts_weight_block_size = None
+
         # Cache shared_experts and related attributes
         self.shared_experts = None
         self.shared_experts_gate_up_proj = None
@@ -245,7 +250,97 @@ class DeepseekV2MoE(nn.Module):
 
                 self.shared_experts_is_fp8 = True
 
+        if self.experts.w13_weight.dtype == torch.int8:
+            assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
+            self.experts_is_int8 = True
+
+        if self.experts.w13_weight.dtype == torch.float8_e4m3fn:
+            assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
+            self.experts_is_fp8 = True
+            self.experts_weight_block_size = (
+                self.experts.quant_method.quant_config.weight_block_size
+            )
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        has_shared_experts = self.n_shared_experts is not None
+        use_intel_amx_backend = all(
+            getattr(layer, "use_intel_amx_backend")
+            for layer in (
+                self.gate,
+                self.experts,
+                self.shared_experts_gate_up_proj,
+                self.shared_experts_down_proj,
+            )
+        )
+        if has_shared_experts and use_intel_amx_backend:
+            return self.forward_moe_fused_cpu(hidden_states)
+        else:
+            return self.forward_normal(hidden_states)
+
+    def forward_moe_fused_cpu(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Use cached attributes instead of dynamic access
+        gate_up_proj = self.shared_experts_gate_up_proj
+        down_proj = self.shared_experts_down_proj
+        shared_experts_is_int8 = self.shared_experts_is_int8
+        shared_experts_is_fp8 = self.shared_experts_is_fp8
+        shared_experts_weight_block_size = self.shared_experts_weight_block_size
+
+        # [Note] inplace should be False in fused_experts.
+        # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
+        # While hidden_states is still needed in shared_expert.
+        return sgl_kernel.cpu.forward_moe_fused(
+            hidden_states,
+            self.gate.weight,
+            None,  # bias
+            self.experts.w13_weight,
+            self.experts.w2_weight,
+            gate_up_proj.weight,
+            down_proj.weight,
+            self.experts.top_k,
+            self.experts.use_grouped_topk,
+            self.experts.renormalize,
+            self.experts_is_int8,
+            self.experts_is_fp8,
+            False,  # fused_experts_inplace
+            self.routed_scaling_factor,
+            True,  # shared_expert_inplace
+            shared_experts_is_int8,
+            shared_experts_is_fp8,
+            self.tp_size,
+            self.experts.topk_group,
+            self.experts.num_expert_group,
+            self.experts.correction_bias,
+            (
+                self.experts.w13_weight_scale
+                if self.experts_is_int8
+                else self.experts.w13_weight_scale_inv if self.experts_is_fp8 else None
+            ),
+            (
+                self.experts.w2_weight_scale
+                if self.experts_is_int8
+                else self.experts.w2_weight_scale_inv if self.experts_is_fp8 else None
+            ),
+            self.experts.w13_input_scale if self.experts_is_int8 else None,
+            self.experts.w2_input_scale if self.experts_is_int8 else None,
+            self.experts_weight_block_size,
+            (
+                gate_up_proj.weight_scale
+                if shared_experts_is_int8
+                else (gate_up_proj.weight_scale_inv if shared_experts_is_fp8 else None)
+            ),
+            (
+                down_proj.weight_scale
+                if shared_experts_is_int8
+                else down_proj.weight_scale_inv if shared_experts_is_fp8 else None
+            ),
+            shared_experts_weight_block_size if shared_experts_is_fp8 else None,
+            None,  # shared_expert_a1_scale
+            None,  # shared_expert_a2_scale
+            get_tp_group().device_group if self.tp_size > 1 else None,
+            torch.distributed.ReduceOp.SUM if self.tp_size > 1 else None,
+        )
+
+    def forward_normal(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         if self.gate_impl is None:

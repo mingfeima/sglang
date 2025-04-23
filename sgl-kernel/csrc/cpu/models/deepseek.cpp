@@ -45,6 +45,55 @@ extern at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2, at::Tens
 
 extern void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, py::object op);
 
+extern std::tuple<at::Tensor, at::Tensor> grouped_topk_cpu(
+    at::Tensor& hidden_states,
+    at::Tensor& gating_output,
+    int64_t topk,
+    bool renormalize,
+    int64_t num_expert_group,
+    int64_t topk_group);
+
+extern std::tuple<at::Tensor, at::Tensor> biased_grouped_topk_cpu(
+    at::Tensor& hidden_states,
+    at::Tensor& gating_output,
+    at::Tensor& correction_bias,
+    int64_t topk,
+    bool renormalize,
+    int64_t num_expert_group,
+    int64_t topk_group);
+
+extern at::Tensor fused_experts_cpu(
+    at::Tensor& hidden_states,
+    at::Tensor& w1,
+    at::Tensor& w2,
+    at::Tensor& topk_weights,
+    at::Tensor& topk_ids,
+    bool inplace,
+    bool use_int8_w8a8,
+    bool use_fp8_w8a16,
+    std::optional<at::Tensor>& w1_scale,
+    std::optional<at::Tensor>& w2_scale,
+    std::optional<std::vector<int64_t>> block_size,
+    std::optional<at::Tensor>& a1_scale,
+    std::optional<at::Tensor>& a2_scale,
+    bool is_vnni);
+
+extern at::Tensor shared_expert_cpu(
+    at::Tensor& hidden_states,
+    at::Tensor& w1,
+    at::Tensor& w2,
+    at::Tensor& fused_experts_out,
+    double routed_scaling_factor,
+    bool inplace,
+    bool use_int8_w8a8,
+    bool use_fp8_w8a16,
+    std::optional<at::Tensor>& w1_scale,
+    std::optional<at::Tensor>& w2_scale,
+    std::optional<std::vector<int64_t>> block_size,
+    std::optional<at::Tensor>& a1_scale,
+    std::optional<at::Tensor>& a2_scale,
+    bool is_vnni);
+
 // This function implements the forward function of sglang/python/sglang/srt/layers/linear.py:RowParallelLinear
 at::Tensor row_parallel_linear_forward(
     at::Tensor& mat1, at::Tensor& mat2,
@@ -241,4 +290,147 @@ at::Tensor forward_absorb_decode_fused_cpu(
     o_proj_scale,
     o_proj_block_size,
     is_vnni);
+}
+
+// This is the fused forward function of sglang/python/sglang/srt/models/deepseek_v2.py:DeepseekV2MoE
+at::Tensor forward_moe_fused_cpu(
+    at::Tensor& hidden_states, // MoEGate
+    at::Tensor& MoEGate_weight, // MoEGate
+    std::optional<at::Tensor>& bias, // MoEGate
+    at::Tensor& fused_experts_w13_weight, // experts
+    at::Tensor& fused_experts_w2_weight, // experts
+    at::Tensor& shared_expert_w1, // shared_expert
+    at::Tensor& shared_expert_w2, // shared_expert
+    int top_k, // select_experts
+    bool use_grouped_topk, // select_experts
+    bool renormalize, // select_experts
+    bool fused_experts_use_int8_w8a8, // experts
+    bool fused_experts_use_fp8_w8a16, // experts
+    bool fused_experts_inplace, // experts
+    double routed_scaling_factor, // shared_expert
+    bool shared_expert_inplace, // shared_expert
+    bool shared_expert_use_int8_w8a8, // shared_expert
+    bool shared_expert_use_fp8_w8a16, // shared_expert
+    int tp_size, // all_reduce
+    std::optional<int> topk_group, // select_experts
+    std::optional<int> num_expert_group, // select_experts
+    std::optional<at::Tensor>& correction_bias, // select_experts
+    std::optional<at::Tensor>& fused_experts_w1_scale, // experts
+    std::optional<at::Tensor>& fused_experts_w2_scale, // experts
+    std::optional<at::Tensor>& fused_experts_a1_scale, // experts
+    std::optional<at::Tensor>& fused_experts_a2_scale, // experts
+    std::optional<std::vector<int64_t>> fused_experts_block_size, // experts
+    std::optional<at::Tensor>& shared_expert_w1_scale, // shared_expert
+    std::optional<at::Tensor>& shared_expert_w2_scale, // shared_expert
+    std::optional<std::vector<int64_t>> shared_expert_block_size, // shared_expert
+    std::optional<at::Tensor>& shared_expert_a1_scale, // shared_expert
+    std::optional<at::Tensor>& shared_expert_a2_scale,     // shared_expert
+    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // all_reduce
+    std::optional<py::object> op, // all_reduce
+    bool is_vnni // MoEGate, experts, shared_expert
+) {
+  RECORD_FUNCTION("sgl-kernel::forward_moe_fused_cpu", std::vector<c10::IValue>({
+    hidden_states, MoEGate_weight, bias, fused_experts_w13_weight, fused_experts_w2_weight, shared_expert_w1, shared_expert_w2}));
+
+  // stage 1:
+  // num_tokens, hidden_dim = hidden_states.shape
+  // hidden_states = hidden_states.view(-1, hidden_dim)
+  auto sizes = hidden_states.sizes();
+  int64_t num_tokens = sizes[0];
+  int64_t hidden_dim = sizes[1];
+  hidden_states = hidden_states.view({-1, hidden_dim});
+
+  // stage 2:
+  // router_logits = self.gate_impl(hidden_states)
+  auto router_logits = weight_packed_linear(hidden_states, MoEGate_weight, bias, is_vnni);
+
+  // stage 3:
+  // fused_experts_out = self.experts_impl(
+  //     hidden_states=hidden_states, router_logits=router_logits
+  // )
+
+  // stage 3.1:
+  // topk_weights, topk_ids = select_experts(
+  //     hidden_states=x,
+  //     router_logits=router_logits,
+  //     use_grouped_topk=use_grouped_topk,
+  //     top_k=top_k,
+  //     renormalize=renormalize,
+  //     topk_group=topk_group,
+  //     num_expert_group=num_expert_group,
+  //     custom_routing_function=custom_routing_function,
+  //     correction_bias=correction_bias,
+  // )
+  TORCH_CHECK(use_grouped_topk, "forward_moe_fused_cpu: expect use_grouped_topk to be true");
+  TORCH_CHECK(topk_group.has_value(), "forward_moe_fused_cpu: missing topk_group");
+  TORCH_CHECK(num_expert_group.has_value(), "forward_moe_fused_cpu: missing num_expert_group");
+
+  at::Tensor topk_weights, topk_ids;
+  if (!correction_bias.has_value()) {
+    std::tie(topk_weights, topk_ids) = grouped_topk_cpu(
+      hidden_states,
+      router_logits,
+      top_k,
+      renormalize,
+      num_expert_group.value(),
+      topk_group.value());
+  } else {
+    std::tie(topk_weights, topk_ids) = biased_grouped_topk_cpu(
+      hidden_states,
+      router_logits,
+      correction_bias.value(),
+      top_k,
+      renormalize,
+      num_expert_group.value(),
+      topk_group.value());
+  }
+
+  // stage 3.2: fused_experts
+  auto fused_experts_out = fused_experts_cpu(
+    hidden_states,
+    fused_experts_w13_weight,
+    fused_experts_w2_weight,
+    topk_weights,
+    topk_ids,
+    fused_experts_inplace,
+    fused_experts_use_int8_w8a8,
+    fused_experts_use_fp8_w8a16,
+    fused_experts_w1_scale,
+    fused_experts_w2_scale,
+    fused_experts_block_size,
+    fused_experts_a1_scale,
+    fused_experts_a2_scale,
+    is_vnni);
+
+  // stage 4: shared_expert
+  auto final_hidden_states = shared_expert_cpu(
+    hidden_states,
+    shared_expert_w1,
+    shared_expert_w2,
+    fused_experts_out,
+    routed_scaling_factor,
+    shared_expert_inplace,
+    shared_expert_use_int8_w8a8,
+    shared_expert_use_fp8_w8a16,
+    shared_expert_w1_scale,
+    shared_expert_w2_scale,
+    shared_expert_block_size,
+    shared_expert_a1_scale,
+    shared_expert_a2_scale,
+    is_vnni);
+
+  // stage 5:
+  // if self.tp_size > 1:
+  //     final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
+  if (tp_size > 1) {
+    TORCH_CHECK(process_group.has_value(), "missing process_group for tp_size > 1 row_parallel_linear_forward");
+    TORCH_CHECK(op.has_value(), "missing reduce op for tp_size > 1 row_parallel_linear_forward");
+    shm_allreduce(final_hidden_states, process_group.value(), op.value());
+  }
+
+  // stage 6:
+  // return final_hidden_states.view(num_tokens, hidden_dim)
+  final_hidden_states = final_hidden_states.view({num_tokens, hidden_dim});
+
+  return final_hidden_states;
 }

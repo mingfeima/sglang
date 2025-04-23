@@ -158,6 +158,43 @@ at::Tensor shared_expert_cpu(
     std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
+at::Tensor forward_moe_fused_cpu(
+    at::Tensor& hidden_states, // MoEGate
+    at::Tensor& MoEGate_weight, // MoEGate
+    std::optional<at::Tensor>& bias, // MoEGate
+    at::Tensor& fused_experts_w13_weight, // experts
+    at::Tensor& fused_experts_w2_weight, // experts
+    at::Tensor& shared_expert_w1, // shared_expert
+    at::Tensor& shared_expert_w2, // shared_expert
+    int top_k, // select_experts
+    bool use_grouped_topk, // select_experts
+    bool renormalize, // select_experts
+    bool fused_experts_use_int8_w8a8, // experts
+    bool fused_experts_use_fp8_w8a16, // experts
+    bool fused_experts_inplace, // experts
+    double routed_scaling_factor, // shared_expert
+    bool shared_expert_inplace, // shared_expert
+    bool shared_expert_use_int8_w8a8, // shared_expert
+    bool shared_expert_use_fp8_w8a16, // shared_expert
+    int tp_size, // all_reduce
+    std::optional<int> topk_group, // select_experts
+    std::optional<int> num_expert_group, // select_experts
+    std::optional<at::Tensor>& correction_bias, // select_experts
+    std::optional<at::Tensor>& fused_experts_w1_scale, // experts
+    std::optional<at::Tensor>& fused_experts_w2_scale, // experts
+    std::optional<at::Tensor>& fused_experts_a1_scale, // experts
+    std::optional<at::Tensor>& fused_experts_a2_scale, // experts
+    std::optional<std::vector<int64_t>> fused_experts_block_size, // experts
+    std::optional<at::Tensor>& shared_expert_w1_scale, // shared_expert
+    std::optional<at::Tensor>& shared_expert_w2_scale, // shared_expert
+    std::optional<std::vector<int64_t>> shared_expert_block_size, // shared_expert
+    std::optional<at::Tensor>& shared_expert_a1_scale, // shared_expert
+    std::optional<at::Tensor>& shared_expert_a2_scale,     // shared_expert
+    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // all_reduce
+    std::optional<py::object> op, // all_reduce
+    bool is_vnni // MoEGate, experts, shared_expert
+);
+
 // weight absorption
 std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope( at::Tensor& hidden_states,
     at::Tensor& q_a_proj_weight, at::Tensor& q_b_proj_weight, at::Tensor& kv_a_proj_weight,
@@ -231,6 +268,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   // shared expert
   m.def("shared_expert_cpu", &shared_expert_cpu, "shared expert kernel for CPU");
+
+  // fused forward function for DeepseekV2MoE
+  m.def("forward_moe_fused_cpu", &forward_moe_fused_cpu, "fused MoE kernel for CPU");
 
   // all reduce
   m.def("initialize", &initialize, "shared memory initialization for CPU");
