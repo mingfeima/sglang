@@ -489,6 +489,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
     TORCH_CHECK(q_b_proj_scale.has_value(), "missing q_b_proj_scale for int8 w8a8.");
     TORCH_CHECK(kv_a_proj_scale.has_value(), "missing kv_a_proj_scale for int8 w8a8.");
   }
+  if (use_fp8_w8a16) {
+    TORCH_CHECK(q_a_proj_scale.has_value(), "missing q_a_proj_scale for fp8 w8a16.");
+    TORCH_CHECK(q_b_proj_scale.has_value(), "missing q_b_proj_scale for fp8 w8a16.");
+    TORCH_CHECK(kv_a_proj_scale.has_value(), "missing kv_a_proj_scale for fp8 w8a16.");
+    TORCH_CHECK(block_size.has_value(), "missing block_size for fp8 w8a16.");
+    TORCH_CHECK(block_size.value().size() == 2, "block_size should be 2D for fp8 w8a16.");
+  }
 
   // outputs and temp buffer
   const auto options = hidden_states.options();
@@ -498,7 +505,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
 
   // outputs of q_a_proj and q_b_proj
   auto qa = at::empty({num_seqs, q_lora_rank}, options);
-  std::optional<at::Tensor> bias;
 
   // stage 1: q_a_proj and kv_a_proj
   AT_DISPATCH_REDUCED_FLOATING_TYPES(st, "qkv_proj_kernel_impl", [&] {
@@ -540,14 +546,20 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
     } else if (use_fp8_w8a16) {
       int64_t block_size_N = block_size.value()[0];
       int64_t block_size_K = block_size.value()[1];
-      segment_gemm_kernel_impl<scalar_t>(
+      auto q_a_proj_s = q_a_proj_scale.value();
+      auto kv_a_proj_s = kv_a_proj_scale.value();
+      CHECK_EQ(q_a_proj_s.size(0), div_up(q_lora_rank, block_size_N));
+      CHECK_EQ(q_a_proj_s.size(1), div_up(hidden_size, block_size_K));
+      CHECK_EQ(kv_a_proj_s.size(0), div_up(kv_lora_rank + qk_rope_head_dim, block_size_N));
+      CHECK_EQ(kv_a_proj_s.size(1), div_up(hidden_size, block_size_K));
+    segment_gemm_kernel_impl<scalar_t>(
           qa.data_ptr<scalar_t>(),
           k_input.data_ptr<scalar_t>(),
           hidden_states.data_ptr<scalar_t>(),
           q_a_proj_weight.data_ptr<at::Float8_e4m3fn>(),
           kv_a_proj_weight.data_ptr<at::Float8_e4m3fn>(),
-          q_a_proj_scale.value().data_ptr<float>(),
-          kv_a_proj_scale.value().data_ptr<float>(),
+          q_a_proj_s.data_ptr<float>(),
+          kv_a_proj_s.data_ptr<float>(),
           num_seqs,
           q_lora_rank,
           kv_lora_rank + qk_rope_head_dim,
@@ -584,6 +596,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
 
   // stage 3: q_b_proj
   at::Tensor qb;
+  std::optional<at::Tensor> bias;
   if (use_int8_w8a8) {
     qb = int8_scaled_mm_with_quant(qa, q_b_proj_weight, q_b_proj_scale.value(), bias, at::kBFloat16, is_vnni);
   } else if (use_fp8_w8a16) {
