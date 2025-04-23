@@ -40,6 +40,7 @@ def apply_torchao_config_to_model(
     model: torch.nn.Module,
     torchao_config: str,
     filter_fn: Optional[Callable] = proj_filter,
+    device: Optional[str] = "cuda",
 ):
     """Quantize a modelwith torchao quantization specified by torchao_config
 
@@ -50,6 +51,7 @@ def apply_torchao_config_to_model(
         128
     """
     # Lazy import to suppress some warnings
+    from torchao.dtypes import Int4CPULayout
     from torchao.quantization import (
         float8_dynamic_activation_float8_weight,
         float8_weight_only,
@@ -74,7 +76,20 @@ def apply_torchao_config_to_model(
             128,
             256,
         ], f"int4wo groupsize needs to be one of [32, 64, 128, 256] but got {group_size}"
-        quantize_(model, int4_weight_only(group_size=group_size), filter_fn=filter_fn)
+        if device == "cuda":
+            quantize_(
+                model, int4_weight_only(group_size=group_size), filter_fn=filter_fn
+            )
+        elif device == "cpu":
+            quantize_(
+                model,
+                int4_weight_only(group_size=group_size, layout=Int4CPULayout()),
+                filter_fn=filter_fn,
+            )
+        else:
+            raise ValueError(
+                f"TorchAO only supports INT4 weight only on CUDA/CPU device but got: {device}"
+            )
     elif "gemlite" in torchao_config:
         # gemlite-<packing_bitwidth>-<bit_width>-<group_size> or
         # gemlite-<bit_width>-<group_size> (packing_bitwidth defaults to 32)
