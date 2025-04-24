@@ -296,7 +296,7 @@ struct tinygemm_kernel_vnni2 {
   static inline void apply(
       const uint8_t* __restrict__ A, const int8_t* __restrict__ B, float* __restrict__ C,
       const float* __restrict__ As, const float* __restrict__ Bs, const int32_t* __restrict__ Bcomp,
-      int64_t K, int64_t lda, int64_t ldb, int64_t ldc, bool need_comp) {
+      int64_t K, int64_t lda, int64_t ldb, int64_t ldc, bool need_Bcomp) {
     TORCH_CHECK(false, "tinygemm_kernel_nn: scalar path not implemented!");
   }
 };
@@ -307,7 +307,7 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
   static inline void apply(
       const uint8_t* __restrict__ A, const int8_t* __restrict__ B, float* __restrict__ C,
       const float* __restrict__ As, const float* __restrict__ Bs, const int32_t* __restrict__ Bcomp,
-      int64_t K, int64_t lda, int64_t ldb, int64_t ldc, bool need_comp) {
+      int64_t K, int64_t lda, int64_t ldb, int64_t ldc, bool need_Bcomp) {
 
     constexpr int ROWS = BLOCK_M;
     constexpr int COLS = BLOCK_N / 16;
@@ -361,13 +361,13 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
         if constexpr (col % 2 == 0) {
           vbs[col + 0] = _mm512_loadu_ps(Bs + col * 16);
           vbs[col + 1] = _mm512_loadu_ps(Bs + col * 16 + 16);
-          if(need_comp){
+          if(need_Bcomp){
             vcomp[col + 0] = _mm512_loadu_si512(Bcomp + col * 16);
             vcomp[col + 1] = _mm512_loadu_si512(Bcomp + col * 16 + 16);
           }
         }
       }
-      auto x_ = need_comp? _mm512_sub_epi32(vc[i], vcomp[col]): vc[i];
+      auto x_ = need_Bcomp ? _mm512_sub_epi32(vc[i], vcomp[col]): vc[i];
       __m512 x = _mm512_cvtepi32_ps(x_);
       x = _mm512_mul_ps(_mm512_mul_ps(x, vas), vbs[col]);
       _mm512_storeu_ps(reinterpret_cast<__m512*>(C + row * ldc + col * 16), x);
@@ -381,7 +381,7 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
     tinygemm_kernel_vnni2<scalar_t, MB_SIZE, NB_SIZE>::apply(                \
         A + mb_start * lda, B + nb_start * 4, C + mb_start * ldc + nb_start, \
         As + mb_start, Bs + nb_start, Bcomp + nb_start,                      \
-        K, lda, ldb, ldc, need_comp);
+        K, lda, ldb, ldc, need_Bcomp);
 
 template <typename scalar_t>
 void tinygemm_kernel(
@@ -396,8 +396,8 @@ void tinygemm_kernel(
     int64_t lda,
     int64_t ldb,
     int64_t ldc) {
-  bool need_comp = true;
   // B compensation
+  bool need_Bcomp = true;
   const int32_t* Bcomp = reinterpret_cast<const int32_t*>(B + block_size_n() * K);
 
   // pattern: 1-4-16
@@ -424,11 +424,11 @@ void tinygemm_kernel(
 }
 
 template <typename scalar_t>
-void tinygemm_kernel_splitk(
+void tinygemm_kernel(
     const uint8_t* __restrict__ A,
     const int8_t* __restrict__ B,
-    const int8_t* __restrict__ B_ori,
-    bool need_comp,
+    const int8_t* __restrict__ B_comp,
+    bool need_Bcomp,
     float* __restrict__ C,
     const float* __restrict__ As,
     const float* __restrict__ Bs,
@@ -440,7 +440,7 @@ void tinygemm_kernel_splitk(
     int64_t ldc) {
 
   // B compensation
-  const int32_t* Bcomp =  reinterpret_cast<const int32_t*>(B_ori + block_size_n() * K * split_k_num());
+  const int32_t* Bcomp =  reinterpret_cast<const int32_t*>(B_comp);
 
   // pattern: 1-4-16
   constexpr int64_t BLOCK_M = 4;
@@ -752,7 +752,8 @@ void shared_expert_int8_kernel_impl(
   // stage 1: intermediate_cache1 = silu(hidden_states @ w1)
   const int64_t MB = div_up(M, BLOCK_M);
   const int64_t NB = div_up(N, BLOCK_N);
-  const int64_t KB = K/split_k_num();
+  const int64_t SPLITK_NUM = get_splitk_num();
+  const int64_t K_SPILT_SIZE = div_up(K, SPLITK_NUM);
   TORCH_CHECK(N % BLOCK_N == 0, "Fixme when N is not multiples of ", BLOCK_N);
 
   // K and N are packed for int8
@@ -761,31 +762,26 @@ void shared_expert_int8_kernel_impl(
   const int64_t stride_n = packed_K;
 
   // here we only parallel on half of 2N to fuse silu_and_mul with gemm
-  at::parallel_for(0, split_k_num() * MB * NB, 0, [&](int64_t begin, int64_t end) {
-    int tid = at::get_thread_num();
-    float* __restrict__ C0 = C_splitk_tmp + split_k_num() * 2 * M * N + tid * 2 * BLOCK_M * BLOCK_N;
-    float* __restrict__ C1 = C0 + BLOCK_M * BLOCK_N;
+  at::parallel_for(0, SPLITK_NUM * MB * NB, 0, [&](int64_t begin, int64_t end) {
     for (int64_t i = begin; i < end; ++i) {
       int64_t kb = i / MB / NB;
       int64_t mb = (i - kb * MB * NB) / NB;
       int64_t nb = (i - kb * MB * NB) % NB;
-      float* __restrict__ C0_res = C_splitk_tmp + kb * 2 * M * N;
-      float* __restrict__ C1_res = C0_res + M * N;
+      float* __restrict__ C0 = C_splitk_tmp + kb * 2 * M * N;
+      float* __restrict__ C1 = C0 + M * N;
       // nb0 from top half and nb1 from bottom half
       int64_t nb0 = nb, nb1 = nb + NB;
       int64_t n_size = std::min(N - nb0 * BLOCK_N, BLOCK_N);
       int64_t m_size = std::min(M - mb * BLOCK_M, BLOCK_M);
+      int64_t k_size = std::min(K - kb * K_SPILT_SIZE, K_SPILT_SIZE);
 
-      // A shape [m_size, K] -> [m_size, KB]
+      // A shape [m_size, K] -> [m_size, K_SPILT_SIZE] when splitk
       const uint8_t* A = Aq_tmp + mb * BLOCK_M * K;
-      // A scale is [m_size, 1]
       const float* As = As_tmp + mb * BLOCK_M;
 
-      // // B shape [K, n_size] in vnni format -> [KB, n_size]
-      // B shape [n_size, K] in vnni format -> [n_size, KB]
+      // B shape [K, n_size] in vnni format -> [K_SPILT_SIZE, n_size] when splitk
       const int8_t* __restrict__ B0 = packed_w1 + nb0 * BLOCK_N * stride_n;
       const int8_t* __restrict__ B1 = packed_w1 + nb1 * BLOCK_N * stride_n;
-      // B scale is [n_size, 1]
       const float* __restrict__ Bs0 = w1s + nb0 * BLOCK_N;
       const float* __restrict__ Bs1 = w1s + nb1 * BLOCK_N;
 
@@ -804,66 +800,54 @@ void shared_expert_int8_kernel_impl(
       //     /* lda   */ K,
       //     /* ldb   */ n_size,
       //     /* ldc   */ N);
-      tinygemm_kernel_splitk<scalar_t>(
-        /* A     */ A + kb * KB ,
-        /* B     */ B0 + kb * KB * BLOCK_N,
-        /* Bcomp     */ B0,
-        kb == 0,
-        /* C     */ C0,
-        /* As    */ As,
-        /* Bs    */ Bs0,
-        /* M     */ m_size,
-        /* N     */ n_size,
-        /* K     */ KB,
-        /* lda   */ K,
-        /* ldb   */ n_size,
-        /* ldc   */ BLOCK_N);
 
-        tinygemm_kernel_splitk<scalar_t>(
-        /* A     */ A + kb * KB,
-        /* B     */ B1 +  kb * KB * BLOCK_N,
-        /* Bcomp     */ B1,
-        kb == 0,
-        /* C     */ C1,
-        /* As    */ As,
-        /* Bs    */ Bs1,
-        /* M     */ m_size,
-        /* N     */ n_size,
-        /* K     */ KB,
-        /* lda   */ K,
-        /* ldb   */ n_size,
-        /* ldc   */ BLOCK_N);
-        
-      for (int mid = 0; mid< m_size; mid++){
-          copy_stub(C0_res + mb*BLOCK_M*N + nb*BLOCK_N + mid * N, C0 + mid * BLOCK_N, n_size);
-          copy_stub(C1_res + mb*BLOCK_M*N + nb*BLOCK_N + mid * N, C1 + mid * BLOCK_N, n_size);
-      }
+      // stage 1.a: GEMMs with splitk
+      tinygemm_kernel<scalar_t>(
+        /* A           */ A + kb * K_SPILT_SIZE ,
+        /* B           */ B0 + kb * K_SPILT_SIZE * BLOCK_N,
+        /* Bcomp_start */ B0 + BLOCK_N * K,
+        /* need_Bcomp  */ kb == 0,
+        /* C           */ C0 + mb*BLOCK_M*N + nb*BLOCK_N,
+        /* As          */ As,
+        /* Bs          */ Bs0,
+        /* M           */ m_size,
+        /* N           */ n_size,
+        /* K           */ k_size,
+        /* lda         */ K,
+        /* ldb         */ n_size,
+        /* ldc         */ N);
+
+        tinygemm_kernel<scalar_t>(
+        /* A           */ A + kb * K_SPILT_SIZE,
+        /* B           */ B1 +  kb * K_SPILT_SIZE * BLOCK_N,
+        /* Bcomp_start */ B1 + BLOCK_N * K,
+        /* need_Bcomp  */ kb == 0,
+        /* C           */ C1 + mb*BLOCK_M*N + nb*BLOCK_N,
+        /* As          */ As,
+        /* Bs          */ Bs1,
+        /* M           */ m_size,
+        /* N           */ n_size,
+        /* K           */ k_size,
+        /* lda         */ K,
+        /* ldb         */ n_size,
+        /* ldc         */ N);
+
     }
   });
 
-  
-  // for(int mid = 0; mid < M; mid++){
-  //     for(int k_id=1; k_id < split_k_num(); k_id++){
-  //       _add_stub<float>(C_splitk_tmp+mid*N, C_splitk_tmp+k_id*2*M*N+mid*N, N);
-  //       _add_stub<float>(C_splitk_tmp+M*N+ mid*N, C_splitk_tmp+k_id*2*M*N+M*N+mid*N, N);
-  //   }
-  // }
-  
-  // std::cout<<C_splitk_tmp[M*N]<<std::endl;
-  // // stage 1-2: reduce [M, splitk, N] * 2 , parallel M, reduce splitk, and then silu_and_mul
+  // stage 1.b: reduce splitk in [M, splitk, N] * 2 , and then silu_and_mul
   at::parallel_for(0, MB*NB, 0, [&](int64_t begin, int64_t end) {
     for (int64_t i = begin; i < end; ++i) {
       int64_t mb = i/ NB;
       int64_t nb = i% NB;
-      int64_t n_size = std::min(N - nb * BLOCK_N, BLOCK_N);
       int64_t m_size = std::min(M - mb * BLOCK_M, BLOCK_M);
       float* __restrict__ C0 = C_splitk_tmp + mb*BLOCK_M*N + nb*BLOCK_N;
       float* __restrict__ C1 = C_splitk_tmp + M*N + mb*BLOCK_M*N + nb*BLOCK_N;
-      silu_and_mul<scalar_t, BLOCK_N>(ic1 +  mb*BLOCK_M*N + nb*BLOCK_N, C0, C1, m_size, N, M, split_k_num());
+      silu_and_mul<scalar_t, BLOCK_N>(ic1 +  mb*BLOCK_M*N + nb*BLOCK_N, C0, C1, m_size, N, M, SPLITK_NUM);
     }
   });
 
-  // stage 1.5: quantize ic1 to uint8, [M, N]
+  // stage 1.c: quantize ic1 to uint8, [M, N]
   at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
       quantize_row_int8<scalar_t>(

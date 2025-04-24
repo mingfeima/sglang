@@ -10,7 +10,7 @@
 // block size for AMX gemm
 constexpr int block_size_m() { return 2 * TILE_M; }
 constexpr int block_size_n() { return 2 * TILE_N; }
-constexpr int split_k_num() { return 4; }
+constexpr int get_splitk_num() { return 4; }
 // define threshold using brgemm (intel AMX)
 template <typename T> inline bool can_use_brgemm(int M);
 template <> inline bool can_use_brgemm<at::BFloat16>(int M) { return M > 4; }
