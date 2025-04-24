@@ -810,6 +810,9 @@ class DeepseekV2AttentionMLA(nn.Module):
                 )
                 self.qkv_proj_with_rope_is_fp8 = True
 
+        # currently absorb_fused_mla_rope_cpu does not support AWQ weights
+        self.use_absorb_fused_mla_rope_cpu = self.q_lora_rank is not None and hasattr(self.q_a_proj, "weight")
+
         params = MParams()
         params.q_lora_rank = self.q_lora_rank
         if params.q_lora_rank is not None:
@@ -923,7 +926,7 @@ class DeepseekV2AttentionMLA(nn.Module):
                 else:
                     return self.forward_absorb(positions, hidden_states, forward_batch)
             else:
-                if self.q_lora_rank is not None and self.use_intel_amx_backend:
+                if self.use_absorb_fused_mla_rope_cpu and self.use_intel_amx_backend:
                     if forward_batch.forward_mode.is_decode():
                         return self.forward_absorb_decode_fused_cpu(
                             positions, hidden_states, forward_batch
