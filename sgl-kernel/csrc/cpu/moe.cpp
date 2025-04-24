@@ -1238,7 +1238,7 @@ at::Tensor shared_expert_cpu(
   // for fp8 w8a16:
   //   6. intermediate_cache0 : [M, 2N]
   //
-  int64_t num_threads = at::get_num_threads();
+  int num_threads = at::get_num_threads();
   int64_t buffer_size_nbytes = M * N * 2 + num_threads * 2 * BLOCK_M * BLOCK_N * sizeof(float);
 
   if (use_int8_w8a8) {

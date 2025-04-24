@@ -8,28 +8,10 @@ template <typename scalar_t>
 inline void copy_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t size) {
   using Vec = at::vec::Vectorized<scalar_t>;
   // no remainder
-  int64_t d;
   #pragma GCC unroll 4
-  for (d = 0; d < size; d += Vec::size()) {
+  for (int64_t d = 0; d < size; d += Vec::size()) {
     Vec data = Vec::loadu(input + d);
     data.store(out + d);
-  }
-  for (; d < size; ++d) {
-    out[d] = static_cast<scalar_t>(input[d]);
-  }
-}
-
-template <typename scalar_t>
-inline void _add_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t size) {
-  using Vec = at::vec::Vectorized<scalar_t>;
-  int64_t d;
-  #pragma GCC unroll 4
-  for (d = 0; d < size; d += Vec::size()) {
-    Vec data = Vec::loadu(input + d) + Vec::loadu(out + d);
-    data.store(out + d);
-  }
-  for (; d < size; ++d) {
-    out[d] = static_cast<scalar_t>(input[d]+out[d]);
   }
 }
 
@@ -666,8 +648,8 @@ INSTANTIATE_MOE_INT8_TEMPLATE(at::BFloat16);
 INSTANTIATE_MOE_INT8_TEMPLATE(at::Half);
 
 //   silu :    shape          leading dimension
-//  input0  [m_size, BLOCK_N]    BLOCK_N
-//  input1  [m_size, BLOCK_N]    BLOCK_N
+//  input0  [m_size, BLOCK_N]    N
+//  input1  [m_size, BLOCK_N]    N
 //  output  [M , N]          N
 template <typename scalar_t, int BLOCK_N>
 inline void silu_and_mul(
@@ -676,8 +658,8 @@ inline void silu_and_mul(
     const float* __restrict__ input1,  // y: y0, y1
     int64_t m_size,
     int64_t N,
-    int64_t M,
-    int64_t splitk_size) {
+    int64_t offset_reduce,
+    int64_t splitk_num) {
 
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
@@ -695,11 +677,12 @@ inline void silu_and_mul(
       fVec x1 = fVec::loadu(x + d + fVec::size());
       fVec y0 = fVec::loadu(y + d);
       fVec y1 = fVec::loadu(y + d + fVec::size());
-      for(int64_t id=1; id< splitk_size; id++){
-        x0 += fVec::loadu(x + id*2*M*N+ d);
-        x1 += fVec::loadu(x + id*2*M*N+ d + fVec::size());
-        y0 += fVec::loadu(y + id*2*M*N+ d);
-        y1 += fVec::loadu(y + id*2*M*N+ d + fVec::size());
+      // reduce sum if splitk_num > 1
+      for (int64_t id = 1; id < splitk_num; id++) {
+        x0 += fVec::loadu(x + id * offset_reduce+ d);
+        x1 += fVec::loadu(x + id * offset_reduce+ d + fVec::size());
+        y0 += fVec::loadu(y + id * offset_reduce+ d);
+        y1 += fVec::loadu(y + id * offset_reduce+ d + fVec::size());
       }
 
       // silu
@@ -843,7 +826,7 @@ void shared_expert_int8_kernel_impl(
       int64_t m_size = std::min(M - mb * BLOCK_M, BLOCK_M);
       float* __restrict__ C0 = C_splitk_tmp + mb*BLOCK_M*N + nb*BLOCK_N;
       float* __restrict__ C1 = C_splitk_tmp + M*N + mb*BLOCK_M*N + nb*BLOCK_N;
-      silu_and_mul<scalar_t, BLOCK_N>(ic1 +  mb*BLOCK_M*N + nb*BLOCK_N, C0, C1, m_size, N, M, SPLITK_NUM);
+      silu_and_mul<scalar_t, BLOCK_N>(ic1 +  mb*BLOCK_M*N + nb*BLOCK_N, C0, C1, m_size, N, 2*M*N, SPLITK_NUM);
     }
   });
 
