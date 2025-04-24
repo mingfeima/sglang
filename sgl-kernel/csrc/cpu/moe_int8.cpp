@@ -768,22 +768,6 @@ void shared_expert_int8_kernel_impl(
       const float* __restrict__ Bs0 = w1s + nb0 * BLOCK_N;
       const float* __restrict__ Bs1 = w1s + nb1 * BLOCK_N;
 
-      // // fused 1.b: silu_and_mul(A @ B0, A @ B1)
-      // tinygemm_kernel(
-      //     /* A     */ A,
-      //     /* B0    */ B0,
-      //     /* B1    */ B1,
-      //     /* C     */ ic1 + mb * BLOCK_M * N + nb * BLOCK_N,
-      //     /* As    */ As,
-      //     /* Bs0   */ Bs0,
-      //     /* Bs1   */ Bs1,
-      //     /* M     */ m_size,
-      //     /* N     */ n_size,
-      //     /* K     */ K,
-      //     /* lda   */ K,
-      //     /* ldb   */ n_size,
-      //     /* ldc   */ N);
-
       // stage 1.a: GEMMs with splitk
       tinygemm_kernel<scalar_t>(
         /* A           */ A + kb * K_SPILT_SIZE ,
