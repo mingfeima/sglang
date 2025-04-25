@@ -272,6 +272,159 @@ void tinygemm_kernel(
   }
 }
 
+/// gemm for w13, no silu and mul fusion (due to splitk)
+template <typename scalar_t, int BLOCK_M, int BLOCK_N>
+struct tinygemm_kernel_vnni_v2 {
+  static inline void apply(
+      const uint8_t* __restrict__ A, const int8_t* __restrict__ B0, const int8_t* __restrict__ B1, float* __restrict__ C0, float* __restrict__ C1,
+      const float* __restrict__ As, const float* __restrict__ Bs0, const float* __restrict__ Bs1,
+      const int32_t* __restrict__ Bcomp0, const int32_t* __restrict__ Bcomp1,
+      int64_t K, int64_t lda, int64_t ldb, int64_t ldc, bool need_Bcomp) {
+    TORCH_CHECK(false, "tinygemm_kernel_nn: scalar path not implemented!");
+  }
+};
+
+#if defined(CPU_CAPABILITY_AVX512)
+template <int BLOCK_M, int BLOCK_N>
+struct tinygemm_kernel_vnni_v2<at::BFloat16, BLOCK_M, BLOCK_N> {
+  static inline void apply(
+      const uint8_t* __restrict__ A, const int8_t* __restrict__ B0, const int8_t* __restrict__ B1, float* __restrict__ C0, float* __restrict__ C1,
+      const float* __restrict__ As, const float* __restrict__ Bs0, const float* __restrict__ Bs1,
+      const int32_t* __restrict__ Bcomp0, const int32_t* __restrict__ Bcomp1,
+      int64_t K, int64_t lda, int64_t ldb, int64_t ldc, bool need_Bcomp) {
+
+    constexpr int ROWS = BLOCK_M;
+    constexpr int COLS = BLOCK_N / 16;
+    static_assert(COLS % 2 == 0);
+
+    __m512i va;
+    __m512i vb0[COLS];
+    __m512i vb1[COLS];
+    __m512i vc0[ROWS * COLS];
+    __m512i vc1[ROWS * COLS];
+    __m512i vcomp0[COLS];
+    __m512i vcomp1[COLS];
+    __m512  vas;
+    __m512  vbs0[COLS];
+    __m512  vbs1[COLS];
+
+    auto loadc = [&](auto i) {
+      vc0[i] = _mm512_set1_epi32(0);
+      vc1[i] = _mm512_set1_epi32(0);
+    };
+    Unroll<ROWS * COLS>{}(loadc);
+
+    const int64_t K4 = K >> 2;
+    const int64_t lda4 = lda >> 2;
+    const int64_t ldb4 = ldb; // ldb * 4 >> 2;
+    const int32_t* a_ptr = reinterpret_cast<const int32_t*>(A);
+    const int32_t* b0_ptr = reinterpret_cast<const int32_t*>(B0);
+    const int32_t* b1_ptr = reinterpret_cast<const int32_t*>(B1);
+
+    auto compute = [&](auto i, int64_t k) {
+      constexpr int row = i / COLS;
+      constexpr int col = i % COLS;
+
+      if constexpr (col == 0) {
+        va = _mm512_set1_epi32(a_ptr[row * lda4 + k]);
+      }
+      if constexpr (row == 0) {
+        vb0[col] = _mm512_loadu_si512(b0_ptr + k * ldb4 + col * 16);
+        vb1[col] = _mm512_loadu_si512(b1_ptr + k * ldb4 + col * 16);
+      }
+      vc0[i] = _mm512_dpbusd_epi32(vc0[i], va, vb0[col]);
+      vc1[i] = _mm512_dpbusd_epi32(vc1[i], va, vb1[col]);
+    };
+    for (int64_t k = 0; k < K4; ++k) {
+      Unroll<ROWS * COLS>{}(compute, k);
+    }
+
+    auto scalec_and_store = [&](auto i) {
+      constexpr int row = i / COLS;
+      constexpr int col = i % COLS;
+
+      // load a scale
+      if constexpr(col == 0) {
+        vas = _mm512_set1_ps(As[row]);
+      }
+      // load b scale and vcomp
+      if constexpr (row == 0) {
+        vbs0[col] = _mm512_loadu_ps(Bs0 + col * 16);
+        vbs1[col] = _mm512_loadu_ps(Bs1 + col * 16);
+        if (need_Bcomp) {
+          vcomp0[col] = _mm512_loadu_si512(Bcomp0 + col * 16);
+          vcomp1[col] = _mm512_loadu_si512(Bcomp1 + col * 16);
+        }
+      }
+      auto c0_ = need_Bcomp ? _mm512_sub_epi32(vc0[i], vcomp0[col]): vc0[i];
+      auto c1_ = need_Bcomp ? _mm512_sub_epi32(vc1[i], vcomp1[col]): vc1[i];
+      __m512 c0 = _mm512_cvtepi32_ps(c0_);
+      __m512 c1 = _mm512_cvtepi32_ps(c1_);
+      c0 = _mm512_mul_ps(_mm512_mul_ps(c0, vas), vbs0[col]);
+      _mm512_storeu_ps(reinterpret_cast<__m512*>(C0 + row * ldc + col * 16), c0);
+      c1  = _mm512_mul_ps(_mm512_mul_ps(c1, vas), vbs1[col]);
+      _mm512_storeu_ps(reinterpret_cast<__m512*>(C1 + row * ldc + col * 16), c1);
+    };
+    Unroll<ROWS * COLS>{}(scalec_and_store);
+
+  }
+};
+#endif
+
+#define LAUNCH_TINYGEMM_KERNEL_VNNI_V2(MB_SIZE, NB_SIZE)                        \
+    tinygemm_kernel_vnni_v2<scalar_t, MB_SIZE, NB_SIZE>::apply(                 \
+        A + mb_start * lda, B0 + nb_start * 4, B1 + nb_start * 4,            \
+        C0 + mb_start * ldc + nb_start, C1 + mb_start * ldc + nb_start, As + mb_start,                        \
+        Bs0 + nb_start, Bs1 + nb_start, Bcomp0 + nb_start, Bcomp1 + nb_start,\
+        K, lda, ldb, ldc, need_Bcomp);
+
+template <typename scalar_t>
+void tinygemm_kernel(
+    const uint8_t* __restrict__ A,
+    const int8_t* __restrict__ B0,
+    const int8_t* __restrict__ B1,
+    const int8_t* __restrict__ B0_comp,
+    const int8_t* __restrict__ B1_comp,
+    float* __restrict__ C0,
+    float* __restrict__ C1,
+    bool need_Bcomp,
+    const float* __restrict__ As,
+    const float* __restrict__ Bs0,
+    const float* __restrict__ Bs1,
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int64_t lda,
+    int64_t ldb,
+    int64_t ldc) {
+
+  const int32_t* Bcomp0 = reinterpret_cast<const int32_t*>(B0_comp);
+  const int32_t* Bcomp1 = reinterpret_cast<const int32_t*>(B1_comp);
+
+  // pattern: 1-(2+2)-(8+8)
+  constexpr int64_t BLOCK_M = 4;
+  constexpr int64_t BLOCK_N = 32;
+  const int64_t MB = div_up(M, BLOCK_M);
+  const int64_t NB = div_up(N, BLOCK_N);
+  for (int mb = 0; mb < MB; ++mb) {
+    int64_t mb_start = mb * BLOCK_M;
+    int64_t mb_size = std::min(BLOCK_M, M - mb_start);
+    for (int64_t nb = 0; nb < NB; ++nb) {
+      int64_t nb_start = nb * BLOCK_N;
+      int64_t nb_size = std::min(BLOCK_N, N - nb_start);
+
+      switch(mb_size << 4 | nb_size >> 4) {
+        case 0x12: LAUNCH_TINYGEMM_KERNEL_VNNI_V2(1, 32); break;
+        case 0x22: LAUNCH_TINYGEMM_KERNEL_VNNI_V2(2, 32); break;
+        case 0x32: LAUNCH_TINYGEMM_KERNEL_VNNI_V2(3, 32); break;
+        case 0x42: LAUNCH_TINYGEMM_KERNEL_VNNI_V2(4, 32); break;
+        default: TORCH_CHECK(false, "Unexpected block size, ", mb_size, "x", "nb_size");
+      }
+    }
+  }
+}
+
+
 /// gemm for w2
 template <typename scalar_t, int BLOCK_M, int BLOCK_N>
 struct tinygemm_kernel_vnni2 {
@@ -770,34 +923,23 @@ void shared_expert_int8_kernel_impl(
 
       // stage 1.a: GEMMs with splitk
       tinygemm_kernel<scalar_t>(
-        /* A           */ A + kb * K_SPILT_SIZE ,
-        /* B           */ B0 + kb * K_SPILT_SIZE * BLOCK_N,
-        /* Bcomp_start */ B0 + BLOCK_N * K,
+        /* A     */ A + kb * K_SPILT_SIZE,
+        /* B0    */ B0 + kb * K_SPILT_SIZE * BLOCK_N,
+        /* B1    */ B1 + kb * K_SPILT_SIZE * BLOCK_N,
+        /* B0comp*/ B0 + BLOCK_N * K,
+        /* B1comp*/ B1 + BLOCK_N * K,
+        /* C     */ C0 + mb*BLOCK_M*N + nb*BLOCK_N,
+        /* C     */ C1 + mb*BLOCK_M*N + nb*BLOCK_N,
         /* need_Bcomp  */ kb == 0,
-        /* C           */ C0 + mb*BLOCK_M*N + nb*BLOCK_N,
-        /* As          */ As,
-        /* Bs          */ Bs0,
-        /* M           */ m_size,
-        /* N           */ n_size,
-        /* K           */ k_size,
-        /* lda         */ K,
-        /* ldb         */ n_size,
-        /* ldc         */ N);
-
-        tinygemm_kernel<scalar_t>(
-        /* A           */ A + kb * K_SPILT_SIZE,
-        /* B           */ B1 +  kb * K_SPILT_SIZE * BLOCK_N,
-        /* Bcomp_start */ B1 + BLOCK_N * K,
-        /* need_Bcomp  */ kb == 0,
-        /* C           */ C1 + mb*BLOCK_M*N + nb*BLOCK_N,
-        /* As          */ As,
-        /* Bs          */ Bs1,
-        /* M           */ m_size,
-        /* N           */ n_size,
-        /* K           */ k_size,
-        /* lda         */ K,
-        /* ldb         */ n_size,
-        /* ldc         */ N);
+        /* As    */ As,
+        /* Bs0   */ Bs0,
+        /* Bs1   */ Bs1,
+        /* M     */ m_size,
+        /* N     */ n_size,
+        /* K     */ k_size,
+        /* lda   */ K,
+        /* ldb   */ n_size,
+        /* ldc   */ N);
 
     }
   });
