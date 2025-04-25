@@ -940,35 +940,6 @@ void shared_expert_int8_kernel_impl(
         /* lda   */ K,
         /* ldb   */ n_size,
         /* ldc   */ N);
-      // tinygemm_kernel<scalar_t>(
-      //   /* A           */ A + kb * K_SPILT_SIZE ,
-      //   /* B           */ B0 + kb * K_SPILT_SIZE * BLOCK_N,
-      //   /* Bcomp_start */ B0 + BLOCK_N * K,
-      //   /* need_Bcomp  */ kb == 0,
-      //   /* C           */ C0 + mb*BLOCK_M*N + nb*BLOCK_N,
-      //   /* As          */ As,
-      //   /* Bs          */ Bs0,
-      //   /* M           */ m_size,
-      //   /* N           */ n_size,
-      //   /* K           */ k_size,
-      //   /* lda         */ K,
-      //   /* ldb         */ n_size,
-      //   /* ldc         */ N);
-
-      //   tinygemm_kernel<scalar_t>(
-      //   /* A           */ A + kb * K_SPILT_SIZE,
-      //   /* B           */ B1 +  kb * K_SPILT_SIZE * BLOCK_N,
-      //   /* Bcomp_start */ B1 + BLOCK_N * K,
-      //   /* need_Bcomp  */ kb == 0,
-      //   /* C           */ C1 + mb*BLOCK_M*N + nb*BLOCK_N,
-      //   /* As          */ As,
-      //   /* Bs          */ Bs1,
-      //   /* M           */ m_size,
-      //   /* N           */ n_size,
-      //   /* K           */ k_size,
-      //   /* lda         */ K,
-      //   /* ldb         */ n_size,
-      //   /* ldc         */ N);
 
     }
   });
