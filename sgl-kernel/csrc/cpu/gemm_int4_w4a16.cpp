@@ -45,8 +45,8 @@ inline void copy_add_stub(scalar_t* __restrict__ out, const float* __restrict__ 
 template <typename scalar_t, bool has_bias, int BLOCK_M, int BLOCK_N>
 struct tinygemm_kernel_nn {
   static inline void apply(
-    const scalar_t* __restrict__ A, const uint8_t* __restrict__ B, scalar_t* __restrict__ C,
-    const uint8_t* __restrict__ Bz, const scalar_t* __restrict__ Bs,
+    const scalar_t* __restrict__ A, const at::quint4x2* __restrict__ B, scalar_t* __restrict__ C,
+    const at::quint4x2* __restrict__ Bz, const scalar_t* __restrict__ Bs,
     const float* __restrict__ bias, int64_t K, int group_size, int64_t lda, int64_t ldb, int64_t ldc,
     int64_t strideBz, int64_t strideBs) {
   TORCH_CHECK(false, "tinygemm_kernel_nn: scalar path not implemented!");
@@ -58,8 +58,8 @@ struct tinygemm_kernel_nn {
 template <bool has_bias, int BLOCK_M, int BLOCK_N>
 struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
   static inline void apply(
-    const at::BFloat16* __restrict__ A, const uint8_t* __restrict__ B, at::BFloat16* __restrict__ C,
-    const uint8_t* __restrict__ Bz, const at::BFloat16* __restrict__ Bs,
+    const at::BFloat16* __restrict__ A, const at::quint4x2* __restrict__ B, at::BFloat16* __restrict__ C,
+    const at::quint4x2* __restrict__ Bz, const at::BFloat16* __restrict__ Bs,
     const float* __restrict__ bias, int64_t K, int group_size, int64_t lda, int64_t ldb, int64_t ldc,
     int64_t strideBz, int64_t strideBs) {
 
@@ -96,7 +96,6 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     const int64_t ldb2 = ldb; // ldb * 2 >> 1;
     const int64_t gs2 = group_size >> 1;
     const float* a_ptr = reinterpret_cast<const float*>(A);
-    const uint8_t* b_ptr = B;
 
     auto loadc = [&](auto i) {
       constexpr int col = i % COLS;
@@ -142,7 +141,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
       }
       if constexpr (row == 0 && col % 2 == 0) {
         __m256i vb_u4 = _mm256_loadu_si256(
-            reinterpret_cast<const __m256i*>(b_ptr + k * ldb + col * 16));
+            reinterpret_cast<const __m256i*>(B + k * ldb + col * 16));
 
         // deinterleave and lookup to BF16
         __m256i vb_i8_lo = vb_u4 & mask;
@@ -153,7 +152,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
         vb[col+1] = (__m512bh)_mm512_permutexvar_epi16(_mm512_cvtepi8_epi16(vb_i8_hi), bf16_lut);
 
         if constexpr (PREFETCH_SIZE_K > 0) {
-          _mm_prefetch(b_ptr + (k + PREFETCH_SIZE_K) * ldb2 + col * 16, _MM_HINT_T0);
+          _mm_prefetch(B + (k + PREFETCH_SIZE_K) * ldb2 + col * 16, _MM_HINT_T0);
         }
       }
       vc[i] = _mm512_dpbf16_ps(vc[i], va, vb[col]);
@@ -193,9 +192,9 @@ template <typename scalar_t, bool has_bias>
 struct brgemm {
   static inline void apply(
       const scalar_t* __restrict__ A,
-      const uint8_t* __restrict__ B,
+      const at::quint4x2* __restrict__ B,
       scalar_t* __restrict__ C,
-      const uint8_t* __restrict__ Bz,
+      const at::quint4x2* __restrict__ Bz,
       const scalar_t* __restrict__ Bs,
       scalar_t* __restrict__ Btmp,
       float* __restrict__ Ctmp,
@@ -222,8 +221,8 @@ inline __m512 CVT_INT8_TO_FP32(__m128i x) {
 
 inline void unpack_B(
   at::BFloat16* __restrict__ Btmp,
-  const uint8_t* __restrict__ packed_B,
-  const uint8_t* __restrict__ Bz,
+  const at::quint4x2* __restrict__ packed_B,
+  const at::quint4x2* __restrict__ Bz,
   const at::BFloat16* __restrict__ Bs,
   int64_t N,
   int64_t K,
@@ -236,7 +235,6 @@ inline void unpack_B(
   const int64_t gs2 = group_size >> 1;
   const int64_t ldb2 = ldb; // ldb * 2 >> 1;
   const int64_t ldb_tmp2 = ldb_tmp;
-  const uint8_t* b_ptr = packed_B;
   float* btmp_ptr = reinterpret_cast<float *>(Btmp);
 
   __m256i mask = _mm256_set1_epi8(0xF);  // lower 4 bit
@@ -273,7 +271,7 @@ inline void unpack_B(
       }
 
       __m256i vb_u4 = _mm256_loadu_si256(
-        reinterpret_cast<const __m256i*>(b_ptr + k * ldb2 + n));
+        reinterpret_cast<const __m256i*>(packed_B + k * ldb2 + n));
 
       // deinterleave and subtract zero point
       __m256i vb_i8_lo = vb_u4 & mask;
@@ -299,9 +297,9 @@ template <bool has_bias>
 struct brgemm<at::BFloat16, has_bias> {
   static inline void apply(
       const at::BFloat16* __restrict__ A,
-      const uint8_t* __restrict__ B,
+      const at::quint4x2* __restrict__ B,
       at::BFloat16* __restrict__ C,
-      const uint8_t* __restrict__ Bz,
+      const at::quint4x2* __restrict__ Bz,
       const at::BFloat16* __restrict__ Bs,
       at::BFloat16* __restrict__ Btmp,
       float* __restrict__ Ctmp,
@@ -345,9 +343,9 @@ struct brgemm<at::BFloat16, has_bias> {
 template <typename scalar_t, bool has_bias>
 void tinygemm_kernel(
     const scalar_t* __restrict__ A,
-    const uint8_t* __restrict__ B,
+    const at::quint4x2* __restrict__ B,
     scalar_t* __restrict__ C,
-    const uint8_t* __restrict__ Bz,
+    const at::quint4x2* __restrict__ Bz,
     const scalar_t* __restrict__ Bs,
     scalar_t* __restrict__ Btmp,
     float* __restrict__ Ctmp,
@@ -404,8 +402,8 @@ template <typename scalar_t>
 void int4_w4a16_linear_kernel_impl(
     scalar_t* __restrict__ out,
     const scalar_t* __restrict__ x,
-    const uint8_t* __restrict__ w,
-    const uint8_t* __restrict__ w_zeros,
+    const at::quint4x2* __restrict__ w,
+    const at::quint4x2* __restrict__ w_zeros,
     const scalar_t* __restrict__ w_scales,
     const float* __restrict__ bias,
     int64_t M,
@@ -519,8 +517,8 @@ at::Tensor int4_w4a16_linear(
     int4_w4a16_linear_kernel_impl<scalar_t>(
         out.data_ptr<scalar_t>(),
         x.data_ptr<scalar_t>(),
-        w.data_ptr<uint8_t>(),
-        w_zeros.data_ptr<uint8_t>(),
+        reinterpret_cast<const at::quint4x2*>(w.data_ptr<uint8_t>()),
+        reinterpret_cast<const at::quint4x2*>(w_zeros.data_ptr<uint8_t>()),
         w_scales.data_ptr<scalar_t>(),
         bias_data,
         M,
