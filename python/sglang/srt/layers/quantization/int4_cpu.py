@@ -473,7 +473,7 @@ def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
     qweight = qweight.flatten(-2).transpose(-1, -2).to(torch.uint8)
 
     # convert to VNNI format: (*, N/BLOCK_N, K/2, BLOCK_N, 2)
-    BLOCK_N = 64  # must match what's used in the kernel
+    BLOCK_N = 32  # must match what's used in the kernel
     *dims, N, K = qweight.shape
     qweight = qweight.reshape(*dims, N // BLOCK_N, BLOCK_N, K // 2, 2)
     qweight = qweight.transpose(-3, -2)
