@@ -471,6 +471,53 @@ void int4_w4a16_linear_kernel_impl(
 
 } // anonymous namespace
 
+// tinygemm interface
+template <typename scalar_t>
+void tinygemm_kernel(
+    const scalar_t* __restrict__ A,
+    const at::quint4x2* __restrict__ B,
+    scalar_t* __restrict__ C,
+    const at::quint4x2* __restrict__ Bz,
+    const scalar_t* __restrict__ Bs,
+    scalar_t* __restrict__ Btmp,
+    float* __restrict__ Ctmp,
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int group_size,
+    int64_t lda,
+    int64_t ldb,
+    int64_t ldc,
+    int64_t strideBz,
+    int64_t strideBs,
+    bool brg) {
+  tinygemm_kernel<scalar_t, false>(A, B, C, Bz, Bs, Btmp, Ctmp, nullptr, M, N, K,
+                                   group_size, lda, ldb, ldc, strideBz, strideBs, brg);
+}
+
+#define INSTANTIATE_TINYGEMM_TEMPLATE(TYPE)   \
+  template void tinygemm_kernel<TYPE>(        \
+      const TYPE* __restrict__ A,             \
+      const at::quint4x2* __restrict__ B,     \
+      TYPE* __restrict__ C,                   \
+      const at::quint4x2* __restrict__ Bz,    \
+      const TYPE* __restrict__ Bs,            \
+      TYPE* __restrict__ Btmp,                \
+      float* __restrict__ Ctmp,               \
+      int64_t M,                              \
+      int64_t N,                              \
+      int64_t K,                              \
+      int group_size,                         \
+      int64_t lda,                            \
+      int64_t ldb,                            \
+      int64_t ldc,                            \
+      int64_t strideBz,                       \
+      int64_t strideBs,                       \
+      bool brg)
+
+INSTANTIATE_TINYGEMM_TEMPLATE(at::BFloat16);
+INSTANTIATE_TINYGEMM_TEMPLATE(at::Half);
+
 // mat1     : [M, K]
 // mat2     : [N, K] (appear as [N, K/2] in u8)
 // w_zeros  : [K/gs, N]
