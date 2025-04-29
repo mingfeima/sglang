@@ -196,6 +196,11 @@ class DeepseekV2MoE(nn.Module):
             prefix=add_prefix("experts", prefix),
         )
 
+        # TODO: cache attr in MParams() like what we did in DeepseekV2AttentionMLA
+        self.experts_is_int8 = None
+        self.experts_is_fp8 = None
+        self.experts_weight_block_size = None
+
         # Cache shared_experts and related attributes
         self.shared_experts = None
         self.shared_experts_gate_up_proj = None
@@ -245,7 +250,97 @@ class DeepseekV2MoE(nn.Module):
 
                 self.shared_experts_is_fp8 = True
 
+        if self.experts.w13_weight.dtype == torch.int8:
+            assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
+            self.experts_is_int8 = True
+
+        if self.experts.w13_weight.dtype == torch.float8_e4m3fn:
+            assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
+            self.experts_is_fp8 = True
+            self.experts_weight_block_size = (
+                self.experts.quant_method.quant_config.weight_block_size
+            )
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        has_shared_experts = self.n_shared_experts is not None
+        use_intel_amx_backend = all(
+            getattr(layer, "use_intel_amx_backend")
+            for layer in (
+                self.gate,
+                self.experts,
+                self.shared_experts_gate_up_proj,
+                self.shared_experts_down_proj,
+            )
+        )
+        if has_shared_experts and use_intel_amx_backend:
+            return self.forward_moe_fused_cpu(hidden_states)
+        else:
+            return self.forward_normal(hidden_states)
+
+    def forward_moe_fused_cpu(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Use cached attributes instead of dynamic access
+        gate_up_proj = self.shared_experts_gate_up_proj
+        down_proj = self.shared_experts_down_proj
+        shared_experts_is_int8 = self.shared_experts_is_int8
+        shared_experts_is_fp8 = self.shared_experts_is_fp8
+        shared_experts_weight_block_size = self.shared_experts_weight_block_size
+
+        # [Note] inplace should be False in fused_experts.
+        # If inplace is True in fused_experts (self.experts), hidden_states will be changed after fused_experts
+        # While hidden_states is still needed in shared_expert.
+        return sgl_kernel.cpu.forward_moe_fused(
+            hidden_states,
+            self.gate.weight,
+            None,  # bias
+            self.experts.w13_weight,
+            self.experts.w2_weight,
+            gate_up_proj.weight,
+            down_proj.weight,
+            self.experts.top_k,
+            self.experts.use_grouped_topk,
+            self.experts.renormalize,
+            self.experts_is_int8,
+            self.experts_is_fp8,
+            False,  # fused_experts_inplace
+            self.routed_scaling_factor,
+            True,  # shared_expert_inplace
+            shared_experts_is_int8,
+            shared_experts_is_fp8,
+            self.tp_size,
+            self.experts.topk_group,
+            self.experts.num_expert_group,
+            self.experts.correction_bias,
+            (
+                self.experts.w13_weight_scale
+                if self.experts_is_int8
+                else self.experts.w13_weight_scale_inv if self.experts_is_fp8 else None
+            ),
+            (
+                self.experts.w2_weight_scale
+                if self.experts_is_int8
+                else self.experts.w2_weight_scale_inv if self.experts_is_fp8 else None
+            ),
+            self.experts.w13_input_scale if self.experts_is_int8 else None,
+            self.experts.w2_input_scale if self.experts_is_int8 else None,
+            self.experts_weight_block_size,
+            (
+                gate_up_proj.weight_scale
+                if shared_experts_is_int8
+                else (gate_up_proj.weight_scale_inv if shared_experts_is_fp8 else None)
+            ),
+            (
+                down_proj.weight_scale
+                if shared_experts_is_int8
+                else down_proj.weight_scale_inv if shared_experts_is_fp8 else None
+            ),
+            shared_experts_weight_block_size if shared_experts_is_fp8 else None,
+            None,  # shared_expert_a1_scale
+            None,  # shared_expert_a2_scale
+            get_tp_group().device_group if self.tp_size > 1 else None,
+            torch.distributed.ReduceOp.SUM if self.tp_size > 1 else None,
+        )
+
+    def forward_normal(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         if self.gate_impl is None:
@@ -527,6 +622,10 @@ class DeepseekV2AttentionMLA(nn.Module):
         self.rope_theta = rope_theta
         self.max_position_embeddings = max_position_embeddings
 
+        self.o_proj_is_int8 = None
+        self.o_proj_is_fp8 = None
+        self.o_proj_weight_block_size = None
+
         if use_dp:
             # For data parallel attention
             if self.q_lora_rank is not None:
@@ -609,6 +708,15 @@ class DeepseekV2AttentionMLA(nn.Module):
                 quant_config=quant_config,
                 prefix=add_prefix("o_proj", prefix),
             )
+            assert self.o_proj.input_is_parallel
+            assert self.o_proj.reduce_results
+            if self.o_proj.weight.dtype == torch.int8:
+                self.o_proj_is_int8 = True
+            if self.o_proj.weight.dtype == torch.float8_e4m3fn:
+                self.o_proj_is_fp8 = True
+                self.o_proj_weight_block_size = (
+                    self.o_proj.quant_method.quant_config.weight_block_size
+                )
 
         self.kv_a_proj_with_mqa = ReplicatedLinear(
             self.hidden_size,
@@ -706,17 +814,74 @@ class DeepseekV2AttentionMLA(nn.Module):
         params = MParams()
         params.q_lora_rank = self.q_lora_rank
         if params.q_lora_rank is not None:
+            # TODO: only cache weight instead of modules. We need to cache weight after weight packing
             params.q_a_proj = self.q_a_proj
             params.q_b_proj = self.q_b_proj
             params.q_a_layernorm = self.q_a_layernorm
+            params.q_a_proj_weight_scale = (
+                params.q_a_proj.weight_scale
+                if self.qkv_proj_with_rope_is_int8
+                else (
+                    params.q_a_proj.weight_scale_inv
+                    if self.qkv_proj_with_rope_is_fp8
+                    else None
+                )
+            )
+            params.q_b_proj_weight_scale = (
+                params.q_b_proj.weight_scale
+                if self.qkv_proj_with_rope_is_int8
+                else (
+                    params.q_b_proj.weight_scale_inv
+                    if self.qkv_proj_with_rope_is_fp8
+                    else None
+                )
+            )
+
         params.kv_a_proj_with_mqa = self.kv_a_proj_with_mqa
+        params.kv_a_proj_with_mqa_weight_scale = (
+            params.kv_a_proj_with_mqa.weight_scale
+            if self.qkv_proj_with_rope_is_int8
+            else (
+                params.kv_a_proj_with_mqa.weight_scale_inv
+                if self.qkv_proj_with_rope_is_fp8
+                else None
+            )
+        )
         params.kv_a_layernorm = self.kv_a_layernorm
         params.rotary_emb = self.rotary_emb
         params.qkv_proj_with_rope_is_int8 = self.qkv_proj_with_rope_is_int8
         params.qkv_proj_with_rope_is_fp8 = self.qkv_proj_with_rope_is_fp8
         params.num_local_heads = self.num_local_heads
         params.kv_lora_rank = self.kv_lora_rank
-        params.weight_block_size = self.weight_block_size
+        params.weight_block_size = (
+            self.weight_block_size if params.qkv_proj_with_rope_is_fp8 else None
+        )
+
+        params.attn_mqa_layer_id = self.attn_mqa.layer_id
+        params.attn_mqa_scaling = self.attn_mqa.scaling
+        params.attn_mqa_logit_cap = self.attn_mqa.logit_cap
+        params.attn_mqa_tp_k_head_num = self.attn_mqa.tp_k_head_num
+        params.attn_mqa_qk_head_dim = self.attn_mqa.qk_head_dim
+        params.attn_mqa_tp_v_head_num = self.attn_mqa.tp_v_head_num
+        params.attn_mqa_v_head_dim = self.attn_mqa.v_head_dim
+        params.attn_mqa_tp_q_head_num = self.attn_mqa.tp_q_head_num
+
+        params.o_proj_tp_size = self.o_proj.tp_size
+        params.o_proj_tp_rank = self.o_proj.tp_rank
+        params.o_proj_is_int8 = self.o_proj_is_int8
+        params.o_proj_is_fp8 = self.o_proj_is_fp8
+        params.o_proj_weight_block_size = self.o_proj_weight_block_size
+        params.o_proj_scale = (
+            self.o_proj.weight_scale
+            if params.o_proj_is_int8
+            else self.o_proj.weight_scale_inv if params.o_proj_is_fp8 else None
+        )
+        params.device_group = (
+            get_tp_group().device_group if params.o_proj_tp_size > 1 else None
+        )
+        params.reduce_op = (
+            torch.distributed.ReduceOp.SUM if params.o_proj_tp_size > 1 else None
+        )
         self.params = params
 
     def forward(
@@ -760,9 +925,14 @@ class DeepseekV2AttentionMLA(nn.Module):
                     return self.forward_absorb(positions, hidden_states, forward_batch)
             else:
                 if self.q_lora_rank is not None and self.use_intel_amx_backend:
-                    return self.forward_absorb_fused_mla_rope_cpu(
-                        positions, hidden_states, forward_batch
-                    )
+                    if forward_batch.forward_mode.is_decode():
+                        return self.forward_absorb_decode_fused_cpu(
+                            positions, hidden_states, forward_batch
+                        )
+                    else:
+                        return self.forward_absorb_fused_mla_rope_cpu(
+                            positions, hidden_states, forward_batch
+                        )
                 else:
                     return self.forward_absorb(positions, hidden_states, forward_batch)
 
@@ -1079,36 +1249,10 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.kv_a_layernorm.variance_epsilon,
             use_int8_w8a8=params.qkv_proj_with_rope_is_int8,
             use_fp8_w8a16=params.qkv_proj_with_rope_is_fp8,
-            q_a_proj_scale=(
-                params.q_a_proj.weight_scale
-                if params.qkv_proj_with_rope_is_int8
-                else (
-                    params.q_a_proj.weight_scale_inv
-                    if params.qkv_proj_with_rope_is_fp8
-                    else None
-                )
-            ),
-            q_b_proj_scale=(
-                params.q_b_proj.weight_scale
-                if params.qkv_proj_with_rope_is_int8
-                else (
-                    params.q_b_proj.weight_scale_inv
-                    if params.qkv_proj_with_rope_is_fp8
-                    else None
-                )
-            ),
-            kv_a_proj_scale=(
-                params.kv_a_proj_with_mqa.weight_scale
-                if params.qkv_proj_with_rope_is_int8
-                else (
-                    params.kv_a_proj_with_mqa.weight_scale_inv
-                    if params.qkv_proj_with_rope_is_fp8
-                    else None
-                )
-            ),
-            weight_block_size=(
-                params.weight_block_size if params.qkv_proj_with_rope_is_fp8 else None
-            ),
+            q_a_proj_scale=params.q_a_proj_weight_scale,
+            q_b_proj_scale=params.q_b_proj_weight_scale,
+            kv_a_proj_scale=params.kv_a_proj_with_mqa_weight_scale,
+            weight_block_size=params.weight_block_size,
         )
         attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)
         attn_output = attn_output.view(-1, params.num_local_heads, params.kv_lora_rank)
@@ -1142,6 +1286,69 @@ class DeepseekV2AttentionMLA(nn.Module):
             sgl_kernel.cpu.bmm(attn_bmm_output, attn_output.transpose(0, 1), w_vc)
             attn_output = output
         output, _ = self.o_proj(attn_output)
+
+        return output
+
+    def forward_absorb_decode_fused_cpu(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        forward_batch: ForwardBatch,
+    ) -> torch.Tensor:
+        params = self.params
+        assert (
+            params.q_lora_rank is not None and self.use_intel_amx_backend
+        ), "forward_absorb_decode_fused_cpu requires q_lora_rank is not None and use_intel_amx_backend"
+
+        # TODO: add FP8 support for bmm
+        assert self.w_vc.dtype not in [torch.float8_e4m3fnuz, torch.float8_e4m3fn]
+        output = sgl_kernel.cpu.forward_absorb_decode_fused(
+            hidden_states,
+            params.q_a_proj.weight,
+            params.q_b_proj.weight,
+            params.kv_a_proj_with_mqa.weight,
+            self.w_kc,
+            params.q_a_layernorm.weight,
+            params.kv_a_layernorm.weight,
+            positions,
+            params.rotary_emb.cos_sin_cache,
+            forward_batch.token_to_kv_pool.get_key_buffer(params.attn_mqa_layer_id),
+            forward_batch.token_to_kv_pool.get_value_buffer(params.attn_mqa_layer_id),
+            forward_batch.out_cache_loc,
+            forward_batch.attn_backend.forward_metadata[0],  # attn_logits
+            forward_batch.req_to_token_pool.req_to_token,
+            forward_batch.req_pool_indices,
+            forward_batch.seq_lens,
+            self.w_vc,
+            self.o_proj.weight,
+            self.o_proj.bias,
+            params.kv_a_layernorm.variance_epsilon,
+            params.qkv_proj_with_rope_is_int8,
+            params.qkv_proj_with_rope_is_fp8,
+            params.attn_mqa_scaling,
+            params.attn_mqa_logit_cap,
+            params.attn_mqa_tp_k_head_num,
+            params.attn_mqa_qk_head_dim,
+            params.attn_mqa_tp_v_head_num,
+            params.attn_mqa_v_head_dim,
+            params.attn_mqa_tp_q_head_num,
+            params.num_local_heads,
+            params.kv_lora_rank,
+            params.o_proj_tp_size,
+            params.o_proj_tp_rank,
+            params.o_proj_is_int8,
+            params.o_proj_is_fp8,
+            hidden_states.dtype,
+            params.q_a_proj_weight_scale,
+            params.q_b_proj_weight_scale,
+            params.kv_a_proj_with_mqa_weight_scale,
+            params.weight_block_size,
+            None,  # bmm_scale
+            params.device_group,
+            params.reduce_op,
+            params.o_proj_scale,
+            params.o_proj_weight_block_size,
+        )
 
         return output
 
