@@ -188,7 +188,9 @@ class ModelRunner:
         # In layered loading, torchao may have been applied
         if not torchao_applied:
             apply_torchao_config_to_model(
-                self.model, global_server_args_dict["torchao_config"]
+                self.model,
+                global_server_args_dict["torchao_config"],
+                device=self.device,
             )
 
         # Apply torch TP if the model supports it
