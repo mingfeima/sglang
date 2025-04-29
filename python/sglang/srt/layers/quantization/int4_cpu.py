@@ -401,61 +401,19 @@ class Int4CPUMoEMethod(FusedMoEMethodBase):
             custom_routing_function=custom_routing_function,
             correction_bias=correction_bias,
         )
-
-        # Ref code from https://huggingface.co/deepseek-ai/DeepSeek-V2/blob/e0828e3cc0a03408724b80c3cc92c8e072db8d01/modeling_deepseek.py#L589
-        len_experts = layer.num_experts
-
-        cnts = topk_ids.new_zeros((topk_ids.shape[0], len_experts))
-        cnts.scatter_(1, topk_ids.to(torch.int64), 1)
-        tokens_per_expert = cnts.sum(dim=0)
-        idxs = topk_ids.view(-1).argsort()
-
-        sorted_tokens = x[idxs // topk_ids.shape[1]]
-        tokens_per_expert = tokens_per_expert.tolist()
-
-        if activation == "silu":
-            act = silu_and_mul
-        else:
-            raise ValueError(f"Unsupported activation: {activation=}")
-
-        outputs = []
-        start_idx = 0
-        for i, num_tokens in enumerate(tokens_per_expert):
-            end_idx = start_idx + num_tokens
-            if num_tokens == 0:
-                continue
-            tokens_for_this_expert = sorted_tokens[start_idx:end_idx]
-
-            gate_up = sgl_kernel.cpu.int4_w4a16_linear(
-                tokens_for_this_expert,
-                layer.w13_qweight[i],
-                layer.w13_qzeros[i],
-                layer.w13_scales[i],
-                None,
-            )
-            gate_up = act(gate_up)
-            expert_out = sgl_kernel.cpu.int4_w4a16_linear(
-                gate_up,
-                layer.w2_qweight[i],
-                layer.w2_qzeros[i],
-                layer.w2_scales[i],
-                None,
-            )
-            outputs.append(expert_out)
-            start_idx = end_idx
-
-        outs = torch.cat(outputs, dim=0) if len(outputs) else sorted_tokens.new_empty(0)
-        new_x = torch.empty_like(outs)
-
-        new_x[idxs] = outs
-        final_out = (
-            new_x.view(*topk_ids.shape, -1)
-            .type(topk_weights.dtype)
-            .mul_(topk_weights.unsqueeze(dim=-1))
-            .sum(dim=1)
-            .type(new_x.dtype)
+        return sgl_kernel.cpu.fused_experts(
+            x,
+            layer.w13_qweight,
+            layer.w2_qweight,
+            topk_weights,
+            topk_ids,
+            inplace=False,
+            use_int4_w4a16=True,
+            w1_scale=layer.w13_scales,
+            w2_scale=layer.w2_scales,
+            w1_zero=layer.w13_qzeros,
+            w2_zero=layer.w2_qzeros,
         )
-        return final_out
 
 
 def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
