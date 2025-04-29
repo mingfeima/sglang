@@ -811,7 +811,9 @@ class DeepseekV2AttentionMLA(nn.Module):
                 self.qkv_proj_with_rope_is_fp8 = True
 
         # currently absorb_fused_mla_rope_cpu does not support AWQ weights
-        self.use_absorb_fused_mla_rope_cpu = self.q_lora_rank is not None and hasattr(self.q_a_proj, "weight")
+        self.use_absorb_fused_mla_rope_cpu = self.q_lora_rank is not None and hasattr(
+            self.q_a_proj, "weight"
+        )
 
         params = MParams()
         params.q_lora_rank = self.q_lora_rank
