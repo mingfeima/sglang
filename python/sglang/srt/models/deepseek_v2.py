@@ -1300,7 +1300,7 @@ class DeepseekV2AttentionMLA(nn.Module):
             params.q_lora_rank is not None and self.use_intel_amx_backend
         ), "forward_absorb_decode_fused_cpu requires q_lora_rank is not None and use_intel_amx_backend"
 
-        # TODO: add FP8 support
+        # TODO: add FP8 support for bmm
         assert self.w_vc.dtype not in [torch.float8_e4m3fnuz, torch.float8_e4m3fn]
         output = sgl_kernel.cpu.forward_absorb_decode_fused(
             hidden_states,
