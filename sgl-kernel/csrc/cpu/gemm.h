@@ -15,8 +15,11 @@ constexpr int block_size_n() { return 2 * TILE_N; }
 template <typename T> inline bool can_use_brgemm(int M);
 template <> inline bool can_use_brgemm<at::BFloat16>(int M) { return M > 4; }
 template <> inline bool can_use_brgemm<at::Half>(int M) { return true; }
-// TODO: add u8s8 brgemm, this requires PyTorch 2.7
+#if defined(SGLANG_CPU_AMX_INT8)
+template <> inline bool can_use_brgemm<int8_t>(int M) { return M > 4; }
+#else
 template <> inline bool can_use_brgemm<int8_t>(int M) { return false; }
+#endif
 template <> inline bool can_use_brgemm<at::Float8_e4m3fn>(int M) { return M > 4; }
 
 // work around compiler internal error
