@@ -151,8 +151,8 @@ void fused_experts_int4_w4a16_kernel_impl(
     const scalar_t* __restrict__ input,
     const at::quint4x2* __restrict__ packed_w1,
     const at::quint4x2* __restrict__ packed_w2,
-    const at::quint4x2* __restrict__ w1z,
-    const at::quint4x2* __restrict__ w2z,
+    const uint8_t* __restrict__ w1z,
+    const uint8_t* __restrict__ w2z,
     const scalar_t* __restrict__ w1s,
     const scalar_t* __restrict__ w2s,
     int group_size,
@@ -194,7 +194,7 @@ void fused_experts_int4_w4a16_kernel_impl(
       // B shape [K, n_size] in vnni format
       int32_t expert_id = expert_ids[mb];
       const at::quint4x2* __restrict__ B = packed_w1 + (expert_id * stride_e + nb * BLOCK_N * stride_n) / 2;
-      const at::quint4x2* __restrict__ Bz = w1z;  // TODO: figure out offset
+      const uint8_t* __restrict__ Bz = w1z;  // TODO: figure out offset
       const scalar_t* __restrict__ Bs = w1s;
 
       // 1.a load A
@@ -282,7 +282,7 @@ void fused_experts_int4_w4a16_kernel_impl(
       // B shape [IC, n_size] in vnni format
       int32_t expert_id = expert_ids[mb];
       const at::quint4x2* __restrict__ B = packed_w2 + (expert_id * stride_e2 + nb * BLOCK_N * stride_oc) / 2;
-      const at::quint4x2* __restrict__ Bz = w2z;  // TODO: figure out offset
+      const uint8_t* __restrict__ Bz = w2z;  // TODO: figure out offset
       const scalar_t* __restrict__ Bs = w2s;
 
       tinygemm_kernel<scalar_t>(
@@ -339,8 +339,8 @@ void fused_experts_int4_w4a16_kernel_impl(
       const TYPE* __restrict__ input,                         \
       const at::quint4x2* __restrict__ packed_w1,             \
       const at::quint4x2* __restrict__ packed_w2,             \
-      const at::quint4x2* __restrict__ w1z,                   \
-      const at::quint4x2* __restrict__ w2z,                   \
+      const uint8_t* __restrict__ w1z,                        \
+      const uint8_t* __restrict__ w2z,                        \
       const TYPE* __restrict__ w1s,                           \
       const TYPE* __restrict__ w2s,                           \
       int group_size,                                         \

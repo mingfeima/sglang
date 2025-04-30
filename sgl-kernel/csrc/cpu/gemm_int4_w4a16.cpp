@@ -477,7 +477,7 @@ void tinygemm_kernel(
     const scalar_t* __restrict__ A,
     const at::quint4x2* __restrict__ B,
     scalar_t* __restrict__ C,
-    const at::quint4x2* __restrict__ Bz,
+    const uint8_t* __restrict__ Bz,
     const scalar_t* __restrict__ Bs,
     scalar_t* __restrict__ Btmp,
     float* __restrict__ Ctmp,
@@ -500,7 +500,7 @@ void tinygemm_kernel(
       const TYPE* __restrict__ A,             \
       const at::quint4x2* __restrict__ B,     \
       TYPE* __restrict__ C,                   \
-      const at::quint4x2* __restrict__ Bz,    \
+      const uint8_t* __restrict__ Bz,         \
       const TYPE* __restrict__ Bs,            \
       TYPE* __restrict__ Btmp,                \
       float* __restrict__ Ctmp,               \
