@@ -387,8 +387,7 @@ class Int4CPUMoEMethod(FusedMoEMethodBase):
         inplace: bool = True,
         no_combine: bool = False,
     ):
-        from sgl_kernel.cpu import silu_and_mul
-
+        assert activation == "silu"
         # Expert selection
         topk_weights, topk_ids = select_experts(
             hidden_states=x,

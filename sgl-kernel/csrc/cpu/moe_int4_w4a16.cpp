@@ -194,15 +194,15 @@ void fused_experts_int4_w4a16_kernel_impl(
       // B shape [K, n_size] in vnni format
       int32_t expert_id = expert_ids[mb];
       const at::quint4x2* __restrict__ B = packed_w1 + (expert_id * stride_e + nb * BLOCK_N * stride_n) / 2;
-      const uint8_t* __restrict__ Bz = w1z;  // TODO: figure out offset
-      const scalar_t* __restrict__ Bs = w1s;
+      // Bz and Bs: [E, K/gs, 2N]
+      const uint8_t* __restrict__ Bz = w1z + expert_id * (K / group_size) * (2 * N) + nb * BLOCK_N;
+      const scalar_t* __restrict__ Bs = w1s + expert_id * (K / group_size) * (2 * N) + nb * BLOCK_N;
 
       // 1.a load A
       const int32_t* A_ids = sorted_ids + mb * BLOCK_M;
       int64_t m_size = offsets[mb + 1] - offsets[mb];
 
-      // const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(m_size);
-      const bool use_brgemm = false;
+      const bool use_brgemm = can_use_brgemm<at::quint4x2>(m_size);
       is_brgemm_used = is_brgemm_used || use_brgemm;
 
       for (int64_t m = 0; m < m_size; ++m) {
@@ -226,9 +226,9 @@ void fused_experts_int4_w4a16_kernel_impl(
           /*   lda          */ K,
           /*   ldb          */ n_size,
           /*   ldc          */ 2 * N,
-          /*   brg          */ use_brgemm,
-          /*   strideBz     */ N,  // TODO: double check this
-          /*   strideBs     */ N);
+          /*   strideBz     */ 2 * N,
+          /*   strideBs     */ 2 * N,
+          /*   brg          */ use_brgemm);
     }
 
     if (is_brgemm_used) {
@@ -270,8 +270,7 @@ void fused_experts_int4_w4a16_kernel_impl(
       int64_t m_size = offsets[mb + 1] - offsets[mb];
       int64_t n_size = std::min(OC - nb * BLOCK_N, BLOCK_N);
 
-      // const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(m_size);
-      const bool use_brgemm = false;
+      const bool use_brgemm = can_use_brgemm<at::quint4x2>(m_size);
       is_brgemm_used = is_brgemm_used || use_brgemm;
 
       // A ptr from ic1 of [M * topk, N] in sorted order
@@ -282,8 +281,9 @@ void fused_experts_int4_w4a16_kernel_impl(
       // B shape [IC, n_size] in vnni format
       int32_t expert_id = expert_ids[mb];
       const at::quint4x2* __restrict__ B = packed_w2 + (expert_id * stride_e2 + nb * BLOCK_N * stride_oc) / 2;
-      const uint8_t* __restrict__ Bz = w2z;  // TODO: figure out offset
-      const scalar_t* __restrict__ Bs = w2s;
+      // Bz and Bs: [E, IC/gs, OC]
+      const uint8_t* __restrict__ Bz = w2z + expert_id * (IC / group_size) * OC + nb * BLOCK_N;
+      const scalar_t* __restrict__ Bs = w2s + expert_id * (IC / group_size) * OC + nb * BLOCK_N;
 
       tinygemm_kernel<scalar_t>(
         /*   A            */ A,
@@ -300,9 +300,9 @@ void fused_experts_int4_w4a16_kernel_impl(
         /*   lda          */ IC,
         /*   ldb          */ n_size,
         /*   ldc          */ BLOCK_N,
-        /*   brg          */ use_brgemm,
-        /*   strideBz     */ N,  // TODO: double check this
-        /*   strideBs     */ N);
+        /*   strideBz     */ OC,
+        /*   strideBs     */ OC,
+        /*   brg          */ use_brgemm);
 
       // 2.b copy from C to ic2 in original order
       //   and also mul topk_weights in float32
