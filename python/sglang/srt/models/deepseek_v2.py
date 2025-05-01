@@ -251,16 +251,18 @@ class DeepseekV2MoE(nn.Module):
 
                     self.shared_experts_is_fp8 = True
 
-        if self.experts.w13_weight.dtype == torch.int8:
-            assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
-            self.experts_is_int8 = True
+        # AWQ doesn't have .w13_weight
+        if getattr(self.experts, "w13_weight", None) is not None:
+            if self.experts.w13_weight.dtype == torch.int8:
+                assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
+                self.experts_is_int8 = True
 
-        if self.experts.w13_weight.dtype == torch.float8_e4m3fn:
-            assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
-            self.experts_is_fp8 = True
-            self.experts_weight_block_size = (
-                self.experts.quant_method.quant_config.weight_block_size
-            )
+            if self.experts.w13_weight.dtype == torch.float8_e4m3fn:
+                assert self.experts.w2_weight.dtype == self.experts.w13_weight.dtype
+                self.experts_is_fp8 = True
+                self.experts_weight_block_size = (
+                    self.experts.quant_method.quant_config.weight_block_size
+                )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         has_shared_experts = self.n_shared_experts is not None
@@ -711,13 +713,15 @@ class DeepseekV2AttentionMLA(nn.Module):
             )
             assert self.o_proj.input_is_parallel
             assert self.o_proj.reduce_results
-            if self.o_proj.weight.dtype == torch.int8:
-                self.o_proj_is_int8 = True
-            if self.o_proj.weight.dtype == torch.float8_e4m3fn:
-                self.o_proj_is_fp8 = True
-                self.o_proj_weight_block_size = (
-                    self.o_proj.quant_method.quant_config.weight_block_size
-                )
+            # AWQ doesn't have .weight
+            if hasattr(self.o_proj, "weight"):
+                if self.o_proj.weight.dtype == torch.int8:
+                    self.o_proj_is_int8 = True
+                if self.o_proj.weight.dtype == torch.float8_e4m3fn:
+                    self.o_proj_is_fp8 = True
+                    self.o_proj_weight_block_size = (
+                        self.o_proj.quant_method.quant_config.weight_block_size
+                    )
 
         self.kv_a_proj_with_mqa = ReplicatedLinear(
             self.hidden_size,
