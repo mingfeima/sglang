@@ -71,9 +71,12 @@ extern at::Tensor fused_experts_cpu(
     bool inplace,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
+    bool use_int4_w4a16,
     std::optional<at::Tensor>& w1_scale,
     std::optional<at::Tensor>& w2_scale,
     std::optional<std::vector<int64_t>> block_size,
+    std::optional<at::Tensor>& w1_zero,
+    std::optional<at::Tensor>& w2_zero,
     std::optional<at::Tensor>& a1_scale,
     std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
@@ -386,6 +389,8 @@ at::Tensor forward_moe_fused_cpu(
   }
 
   // stage 3.2: fused_experts
+  std::optional<at::Tensor> fused_experts_w1_zero = std::nullopt;
+  std::optional<at::Tensor> fused_experts_w2_zero = std::nullopt;
   auto fused_experts_out = fused_experts_cpu(
     hidden_states,
     fused_experts_w13_weight,
@@ -395,9 +400,12 @@ at::Tensor forward_moe_fused_cpu(
     fused_experts_inplace,
     fused_experts_use_int8_w8a8,
     fused_experts_use_fp8_w8a16,
+    false,
     fused_experts_w1_scale,
     fused_experts_w2_scale,
     fused_experts_block_size,
+    fused_experts_w1_zero,
+    fused_experts_w2_zero,
     fused_experts_a1_scale,
     fused_experts_a2_scale,
     is_vnni);
