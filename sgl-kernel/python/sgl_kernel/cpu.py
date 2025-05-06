@@ -203,7 +203,8 @@ def decode_attention(
     sm_scale,
     logit_cap=0.0,
 ):
-    sgl_kernel.common_ops.decode_attention_cpu(
+    # sgl_kernel.common_ops.decode_attention_cpu(
+    torch.ops.sgl_kernel_cpu.decode_attention_cpu.default(
         q,
         k_buffer,
         v_buffer,
@@ -358,12 +359,18 @@ def weight_packed_linear(
     bias,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.weight_packed_linear(
+    # return sgl_kernel.common_ops.weight_packed_linear(
+    return torch.ops.sgl_kernel_cpu.weight_packed_linear.default(
         x,
         weight,
         bias,
         is_vnni,
     )
+
+
+@torch.library.register_fake("sgl_kernel_cpu::weight_packed_linear")
+def _(x, weight, bias, is_vnni):
+    return x.new_empty(x.shape[0], weight.shape[0])
 
 
 def grouped_topk(
@@ -410,7 +417,8 @@ def fused_add_rmsnorm(
     weight,
     eps,
 ):
-    sgl_kernel.common_ops.fused_add_rmsnorm_cpu(
+    # sgl_kernel.common_ops.fused_add_rmsnorm_cpu(
+    torch.ops.sgl_kernel_cpu.fused_add_rmsnorm_cpu.default(
         input,
         residual,
         weight,
@@ -423,11 +431,16 @@ def rmsnorm(
     weight,
     eps,
 ):
-    return sgl_kernel.common_ops.rmsnorm_cpu(
+    # return sgl_kernel.common_ops.rmsnorm_cpu(
+    return torch.ops.sgl_kernel_cpu.rmsnorm_cpu.default(
         input,
         weight,
         eps,
     )
+
+@torch.library.register_fake("sgl_kernel_cpu::rmsnorm_cpu")
+def _(input, weight, eps):
+    return torch.empty_like(input)
 
 
 def int8_scaled_mm(
@@ -470,7 +483,8 @@ def fp8_scaled_mm(
     out_dtype,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.fp8_scaled_mm_cpu(
+    # return sgl_kernel.common_ops.fp8_scaled_mm_cpu(
+    return torch.ops.sgl_kernel_cpu.fp8_scaled_mm_cpu.default(
         mat1, mat2, scales2, block_size, bias, out_dtype, is_vnni
     )
 
@@ -481,19 +495,31 @@ def rotary_position_embedding(
     k_pe,
     t_emb_pos,
 ):
-    return sgl_kernel.common_ops.rotary_position_embedding_cpu(
+    # return sgl_kernel.common_ops.rotary_position_embedding_cpu(
+    return torch.ops.sgl_kernel_cpu.rotary_position_embedding_cpu.default(
         t_pos,
         q_pe,
         k_pe,
         t_emb_pos,
     )
 
+@torch.library.register_fake("sgl_kernel_cpu::rotary_position_embedding_cpu")
+def _(t_pos, q_pe, k_pe, t_emb_pos):
+    return torch.empty_like(q_pe), torch.empty_like(k_pe)
+
 
 def silu_and_mul(
     input,
 ):
-    return sgl_kernel.common_ops.silu_and_mul_cpu(input)
+    # return sgl_kernel.common_ops.silu_and_mul_cpu(input)
+    return torch.ops.sgl_kernel_cpu.silu_and_mul_cpu.default(input)
+
+
+@torch.library.register_fake("sgl_kernel_cpu::silu_and_mul_cpu")
+def _(input):
+    return input.new_empty(input.shape[0], input.shape[1] // 2)
 
 
 def bmm(out, mat1, mat2, is_vnni=True, scale=None):
-    return sgl_kernel.common_ops.bmm_cpu(out, mat1, mat2, is_vnni, scale)
+    # return sgl_kernel.common_ops.bmm_cpu(out, mat1, mat2, is_vnni, scale)
+    return torch.ops.sgl_kernel_cpu.bmm_cpu.default(out, mat1, mat2, is_vnni, scale)

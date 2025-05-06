@@ -12,7 +12,7 @@ extern void decode_attention_cpu(at::Tensor& query, at::Tensor& k_cache, at::Ten
     double sm_scale, double logit_cap);
 
 extern void bmm_cpu(at::Tensor& out, at::Tensor& mat1, at::Tensor& mat2, bool is_vnni,
-    std::optional<at::Tensor>& scale);
+    const std::optional<at::Tensor>& scale);
 
 extern std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
     at::Tensor& hidden_states,
@@ -34,13 +34,13 @@ extern std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope(
     std::optional<std::vector<int64_t>> block_size);
 
 extern at::Tensor weight_packed_linear(at::Tensor& mat1, at::Tensor& mat2,
-    std::optional<at::Tensor>& bias, bool is_vnni);
+    const std::optional<at::Tensor>& bias, bool is_vnni);
 
 extern at::Tensor int8_scaled_mm_with_quant(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& scales2,
     std::optional<at::Tensor>& bias, at::ScalarType out_dtype, bool is_vnni);
 
 extern at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& scales2,
-    std::vector<int64_t> block_size, std::optional<at::Tensor>& bias,
+    std::vector<int64_t> block_size, const std::optional<at::Tensor>& bias,
     at::ScalarType out_dtype, bool is_vnni);
 
 extern void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, py::object op);

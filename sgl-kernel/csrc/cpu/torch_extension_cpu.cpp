@@ -105,7 +105,7 @@ std::tuple<at::Tensor, at::Tensor> per_token_quant_int8_cpu(at::Tensor& A);
 
 // gemm
 at::Tensor weight_packed_linear(at::Tensor& mat1, at::Tensor& mat2,
-    std::optional<at::Tensor>& bias, bool is_vnni);
+    const std::optional<at::Tensor>& bias, bool is_vnni);
 
 // igemm
 at::Tensor int8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2,
@@ -115,7 +115,7 @@ at::Tensor int8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2,
 // fp8 gemm
 at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2,
     at::Tensor& scales2, std::vector<int64_t> block_size,
-    std::optional<at::Tensor>& bias, at::ScalarType out_dtype, bool is_vnni);
+    const std::optional<at::Tensor>& bias, at::ScalarType out_dtype, bool is_vnni);
 
 // quant + igemm
 at::Tensor int8_scaled_mm_with_quant(at::Tensor& mat1, at::Tensor& mat2, at::Tensor& scales2,
@@ -123,7 +123,7 @@ at::Tensor int8_scaled_mm_with_quant(at::Tensor& mat1, at::Tensor& mat2, at::Ten
 
 // bmm
 void bmm_cpu(at::Tensor& out, at::Tensor& mat1, at::Tensor& mat2, bool is_vnni,
-    std::optional<at::Tensor>& scale);
+    const std::optional<at::Tensor>& scale);
 
 // fused moe
 at::Tensor fused_experts_cpu(
@@ -279,4 +279,35 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   // rope
   m.def("rotary_position_embedding_cpu", &rotary_position_embedding_cpu, "rotary position embedding for CPU");
+}
+
+#define IMPL_CPU(op) m.impl(#op, at::kCPU, &op);
+
+TORCH_LIBRARY(sgl_kernel_cpu, m) {
+  m.def("silu_and_mul_cpu(Tensor input) -> Tensor");
+  IMPL_CPU(silu_and_mul_cpu);
+
+  m.def("rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
+  IMPL_CPU(rmsnorm_cpu);
+
+  m.def("fused_add_rmsnorm_cpu(Tensor input, Tensor(a!) residual, Tensor weight, float eps) -> ()");
+  IMPL_CPU(fused_add_rmsnorm_cpu);
+
+  m.def("weight_packed_linear(Tensor mat1, Tensor mat2, Tensor? bias, bool is_vnni) -> Tensor");
+  IMPL_CPU(weight_packed_linear);
+
+  m.def("fp8_scaled_mm_cpu(Tensor mat1, Tensor mat2, Tensor scales2, int[] block_size, Tensor? bias, ScalarType out_dtype, bool is_vnni) -> Tensor");
+  IMPL_CPU(fp8_scaled_mm_cpu);
+
+  m.def("bmm_cpu(Tensor(a!) out, Tensor mat1, Tensor mat2, bool is_vnni, Tensor? scale) -> ()");
+  IMPL_CPU(bmm_cpu);
+
+  m.def("decode_attention_cpu(Tensor query, Tensor(a!) k_cache, Tensor(b!) v_cache, Tensor(c!) output,"
+                             "Tensor key, Tensor value, Tensor loc, Tensor attn_logits,"
+                             "Tensor req_to_token, Tensor req_pool_indices, Tensor seq_lens,"
+                             "float sm_scale, float logit_cap) -> ()");
+  IMPL_CPU(decode_attention_cpu);
+
+  m.def("rotary_position_embedding_cpu(Tensor t_pos, Tensor q_pe, Tensor k_pe, Tensor t_emb_pos) -> (Tensor, Tensor)");
+  IMPL_CPU(rotary_position_embedding_cpu);
 }

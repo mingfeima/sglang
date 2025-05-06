@@ -64,6 +64,7 @@ def patch_model(
             # tp_group.ca_comm = None
             yield torch.compile(
                 torch.no_grad()(model.forward),
+                fullgraph=True,
                 mode="max-autotune-no-cudagraphs",
                 dynamic=False,
             )
