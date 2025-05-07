@@ -296,8 +296,6 @@ class CpuCompileRunner:
                 # self.output_buffers[bs] = output_buffers
 
     def capture_one_batch_size(self, bs: int, forward: Callable):
-        # graph = torch.cuda.CUDAGraph()
-        # stream = self.stream
         num_tokens = bs * self.num_tokens_per_bs
 
         # Graph inputs
@@ -349,20 +347,11 @@ class CpuCompileRunner:
 
         # Attention backend
         self.model_runner.attn_backend.init_forward_metadata(forward_batch)
-        # self.model_runner.attn_backend.init_forward_metadata_capture_cuda_graph(
-        #     bs,
-        #     num_tokens,
-        #     req_pool_indices,
-        #     seq_lens,
-        #     encoder_lens,
-        #     forward_batch.forward_mode,
-        #     forward_batch.spec_info,
-        # )
 
         # trigger torch.compile()
         for _ in range(2):
             self.model_runner.tp_group.barrier()
-            forward(input_ids, forward_batch.positions, forward_batch)
+            forward(input_ids, positions, forward_batch)
 
     def recapture_if_needed(self, forward_batch: ForwardBatch):
         # If the capture_hidden_mode changes, we need to recapture the graph
@@ -397,59 +386,18 @@ class CpuCompileRunner:
             index = bisect.bisect_left(self.compile_bs, raw_bs)
         bs = self.compile_bs[index]
         if bs != raw_bs:
+            raise
             self.seq_lens.fill_(1)
             self.out_cache_loc.zero_()
 
-        # NOTE: this is only for CUDA graph (copy to replay buffers)
-        # we can remove this.
-        # Common inputs
-        self.input_ids[:raw_num_token].copy_(forward_batch.input_ids)
-        self.req_pool_indices[:raw_bs].copy_(forward_batch.req_pool_indices)
-        self.seq_lens[:raw_bs].copy_(forward_batch.seq_lens)
-        self.out_cache_loc[:raw_num_token].copy_(forward_batch.out_cache_loc)
-        self.positions[:raw_num_token].copy_(forward_batch.positions)
-        if forward_batch.decode_seq_lens_cpu is not None:
-            if bs != raw_bs:
-                self.seq_lens_cpu.fill_(1)
-            self.seq_lens_cpu[:raw_bs].copy_(forward_batch.decode_seq_lens_cpu)
-
-        if self.is_encoder_decoder:
-            self.encoder_lens[:raw_bs].copy_(forward_batch.encoder_lens)
-        if forward_batch.mrope_positions is not None:
-            self.mrope_positions[:, :raw_bs].copy_(forward_batch.mrope_positions)
-
-        if hasattr(forward_batch.spec_info, "hidden_states"):
-            self.hidden_states[:raw_num_token] = forward_batch.spec_info.hidden_states
-
         # Attention backend
         self.model_runner.attn_backend.init_forward_metadata(forward_batch)
-        # self.model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
-        #     bs,
-        #     self.req_pool_indices,
-        #     self.seq_lens,
-        #     forward_batch.seq_lens_sum + (bs - raw_bs),
-        #     self.encoder_lens,
-        #     forward_batch.forward_mode,
-        #     forward_batch.spec_info,
-        #     seq_lens_cpu=self.seq_lens_cpu,
-        # )
 
         # Replay
-        # self.graphs[bs].replay()
-        # next_token_logits, hidden_states = self.output_buffers[bs]
         logits_output = self.compiled_forwards[bs](
             forward_batch.input_ids,
             forward_batch.positions,
             forward_batch,
-        )
-        next_token_logits = logits_output.next_token_logits
-        hidden_states = logits_output.hidden_states
-
-        logits_output = LogitsProcessorOutput(
-            next_token_logits=next_token_logits[:raw_num_token],
-            hidden_states=(
-                hidden_states[:raw_num_token] if hidden_states is not None else None
-            ),
         )
         return logits_output
 

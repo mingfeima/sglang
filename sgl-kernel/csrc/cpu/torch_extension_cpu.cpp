@@ -290,7 +290,7 @@ TORCH_LIBRARY(sgl_kernel_cpu, m) {
   m.def("rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
   IMPL_CPU(rmsnorm_cpu);
 
-  m.def("fused_add_rmsnorm_cpu(Tensor input, Tensor(a!) residual, Tensor weight, float eps) -> ()");
+  m.def("fused_add_rmsnorm_cpu(Tensor(a!) input, Tensor(b!) residual, Tensor weight, float eps) -> ()");
   IMPL_CPU(fused_add_rmsnorm_cpu);
 
   m.def("weight_packed_linear(Tensor mat1, Tensor mat2, Tensor? bias, bool is_vnni) -> Tensor");
@@ -303,7 +303,7 @@ TORCH_LIBRARY(sgl_kernel_cpu, m) {
   IMPL_CPU(bmm_cpu);
 
   m.def("decode_attention_cpu(Tensor query, Tensor(a!) k_cache, Tensor(b!) v_cache, Tensor(c!) output,"
-                             "Tensor key, Tensor value, Tensor loc, Tensor attn_logits,"
+                             "Tensor key, Tensor value, Tensor loc, Tensor(d!) attn_logits,"
                              "Tensor req_to_token, Tensor req_pool_indices, Tensor seq_lens,"
                              "float sm_scale, float logit_cap) -> ()");
   IMPL_CPU(decode_attention_cpu);
