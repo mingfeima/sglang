@@ -50,16 +50,11 @@ void initialize(int size, int rank) {
 void shm_allreduce(
     torch::Tensor& data,
     c10::intrusive_ptr<c10d::ProcessGroup> process_group,
-    py::object op) {
+    c10d::ReduceOp op) {
   RECORD_FUNCTION(
       "sgl-kernel::shm_allreduce", std::vector<c10::IValue>({data}));
 
-  static py::object ReduceOp =
-      py::module_::import("torch.distributed").attr("ReduceOp");
-  static auto ReduceOpSum = (int)py::int_(ReduceOp.attr("SUM").attr("value"));
-  TORCH_CHECK(
-      py::int_(op.attr("value")) == ReduceOpSum,
-      "Only torch.distributed.ReduceOp.SUM is supported");
+  TORCH_CHECK(op == c10d::ReduceOp::SUM, "Only torch.distributed.ReduceOp.SUM is supported");
 
   auto numel = data.numel();
 

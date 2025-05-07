@@ -91,7 +91,7 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<std::vector<int64_t>> block_size, // qkv_proj_with_rope
     std::optional<at::Tensor>& bmm_scale, // bmm
     std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
-    std::optional<py::object> op, // o_proj
+    std::optional<c10d::ReduceOp> op, // o_proj
     std::optional<at::Tensor>& o_proj_scale, // o_proj
     std::optional<std::vector<int64_t>> o_proj_block_size, // o_proj
     bool is_vnni  // qkv_proj_with_rope, bmm, o_proj
@@ -191,7 +191,7 @@ at::Tensor forward_moe_fused_cpu(
     std::optional<at::Tensor>& shared_expert_a1_scale, // shared_expert
     std::optional<at::Tensor>& shared_expert_a2_scale,     // shared_expert
     std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // all_reduce
-    std::optional<py::object> op, // all_reduce
+    std::optional<c10d::ReduceOp> op, // all_reduce
     bool is_vnni // MoEGate, experts, shared_expert
 );
 
@@ -207,7 +207,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope( at::Tensor& h
 void initialize(int size, int rank);
 
 // shared mmeory all_reduce
-void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, py::object op);
+void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, c10d::ReduceOp op);
 
 // shared memory all_gather
 at::Tensor shm_allgather(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, int dim);
