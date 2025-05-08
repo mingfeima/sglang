@@ -71,11 +71,11 @@ extern at::Tensor fused_experts_cpu(
     bool inplace,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
-    std::optional<at::Tensor>& w1_scale,
-    std::optional<at::Tensor>& w2_scale,
+    const std::optional<at::Tensor>& w1_scale,
+    const std::optional<at::Tensor>& w2_scale,
     std::optional<std::vector<int64_t>> block_size,
-    std::optional<at::Tensor>& a1_scale,
-    std::optional<at::Tensor>& a2_scale,
+    const std::optional<at::Tensor>& a1_scale,
+    const std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
 extern at::Tensor shared_expert_cpu(
@@ -87,11 +87,11 @@ extern at::Tensor shared_expert_cpu(
     bool inplace,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
-    std::optional<at::Tensor>& w1_scale,
-    std::optional<at::Tensor>& w2_scale,
+    const std::optional<at::Tensor>& w1_scale,
+    const std::optional<at::Tensor>& w2_scale,
     std::optional<std::vector<int64_t>> block_size,
-    std::optional<at::Tensor>& a1_scale,
-    std::optional<at::Tensor>& a2_scale,
+    const std::optional<at::Tensor>& a1_scale,
+    const std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
 // This function implements the forward function of sglang/python/sglang/srt/layers/linear.py:RowParallelLinear

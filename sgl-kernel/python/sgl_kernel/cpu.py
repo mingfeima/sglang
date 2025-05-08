@@ -18,7 +18,8 @@ def fused_experts(
     a2_scale=None,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.fused_experts_cpu(
+    # return sgl_kernel.common_ops.fused_experts_cpu(
+    return torch.ops.sgl_kernel_cpu.fused_experts_cpu.default(
         x,
         w13_weight,
         w2_weight,
@@ -34,6 +35,26 @@ def fused_experts(
         a2_scale,
         is_vnni,
     )
+
+
+@torch.library.register_fake("sgl_kernel_cpu::fused_experts_cpu")
+def _(
+    x,
+    w13_weight,
+    w2_weight,
+    topk_weights,
+    topk_ids,
+    inplace,
+    use_int8_w8a8,
+    use_fp8_w8a16,
+    w1_scale,
+    w2_scale,
+    block_size,
+    a1_scale,
+    a2_scale,
+    is_vnni,
+):
+    return torch.empty_like(x)
 
 
 def shared_expert(
@@ -52,7 +73,8 @@ def shared_expert(
     a2_scale=None,
     is_vnni=True,
 ):
-    return sgl_kernel.common_ops.shared_expert_cpu(
+    # return sgl_kernel.common_ops.shared_expert_cpu(
+    return torch.ops.sgl_kernel_cpu.shared_expert_cpu.default(
         hidden_states,
         w1,
         w2,
@@ -68,6 +90,26 @@ def shared_expert(
         a2_scale,
         is_vnni,
     )
+
+
+@torch.library.register_fake("sgl_kernel_cpu::shared_expert_cpu")
+def _(
+    hidden_states,
+    w1,
+    w2,
+    fused_experts_out,
+    routed_scaling_factor,
+    inplace,
+    use_int8_w8a8,
+    use_fp8_w8a16,
+    w1_scale,
+    w2_scale,
+    block_size,
+    a1_scale,
+    a2_scale,
+    is_vnni,
+):
+    return torch.empty_like(hidden_states)
 
 
 def forward_moe_fused(
@@ -381,7 +423,8 @@ def grouped_topk(
     num_expert_group,
     topk_group,
 ):
-    return sgl_kernel.common_ops.grouped_topk_cpu(
+    # return sgl_kernel.common_ops.grouped_topk_cpu(
+    return torch.ops.sgl_kernel_cpu.grouped_topk_cpu.default(
         hidden_states,
         router_logits,
         top_k,
@@ -389,6 +432,22 @@ def grouped_topk(
         num_expert_group,
         topk_group,
     )
+
+
+@torch.library.register_fake("sgl_kernel_cpu::grouped_topk_cpu")
+def _(
+    hidden_states,
+    router_logits,
+    top_k,
+    renormalize,
+    num_expert_group,
+    topk_group,
+):
+    shape = (hidden_states.shape[0], top_k)
+    device = hidden_states.device
+    topk_weights = torch.empty(shape, device=device, dtype=torch.float32)
+    topk_ids = torch.empty(shape, device=device, dtype=torch.int)
+    return topk_weights, topk_ids
 
 
 def biased_grouped_topk(

@@ -272,6 +272,7 @@ class DeepseekV2MoE(nn.Module):
                 self.shared_experts_down_proj,
             )
         )
+        return self.forward_normal(hidden_states)
         if has_shared_experts and use_intel_amx_backend:
             return self.forward_moe_fused_cpu(hidden_states)
         else:
@@ -346,10 +347,12 @@ class DeepseekV2MoE(nn.Module):
         if self.gate_impl is None:
             self.gate_impl = self.gate.forward
         # router_logits: (num_tokens, n_experts)
-        router_logits = self.gate_impl(hidden_states)
+        # router_logits = self.gate_impl(hidden_states)
+        router_logits = self.gate(hidden_states)
         if self.experts_impl is None:
             self.experts_impl = self.experts.forward
-        fused_experts_out = self.experts_impl(
+        # fused_experts_out = self.experts_impl(
+        fused_experts_out = self.experts(
             hidden_states=hidden_states, router_logits=router_logits
         )
 

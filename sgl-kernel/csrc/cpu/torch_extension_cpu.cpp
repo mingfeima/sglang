@@ -135,11 +135,11 @@ at::Tensor fused_experts_cpu(
     bool inplace,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
-    std::optional<at::Tensor>& w1_scale,
-    std::optional<at::Tensor>& w2_scale,
+    const std::optional<at::Tensor>& w1_scale,
+    const std::optional<at::Tensor>& w2_scale,
     std::optional<std::vector<int64_t>> block_size,
-    std::optional<at::Tensor>& a1_scale,
-    std::optional<at::Tensor>& a2_scale,
+    const std::optional<at::Tensor>& a1_scale,
+    const std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
 at::Tensor shared_expert_cpu(
@@ -151,11 +151,11 @@ at::Tensor shared_expert_cpu(
     bool inplace,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
-    std::optional<at::Tensor>& w1_scale,
-    std::optional<at::Tensor>& w2_scale,
+    const std::optional<at::Tensor>& w1_scale,
+    const std::optional<at::Tensor>& w2_scale,
     std::optional<std::vector<int64_t>> block_size,
-    std::optional<at::Tensor>& a1_scale,
-    std::optional<at::Tensor>& a2_scale,
+    const std::optional<at::Tensor>& a1_scale,
+    const std::optional<at::Tensor>& a2_scale,
     bool is_vnni);
 
 at::Tensor forward_moe_fused_cpu(
@@ -310,4 +310,13 @@ TORCH_LIBRARY(sgl_kernel_cpu, m) {
 
   m.def("rotary_position_embedding_cpu(Tensor t_pos, Tensor q_pe, Tensor k_pe, Tensor t_emb_pos) -> (Tensor, Tensor)");
   IMPL_CPU(rotary_position_embedding_cpu);
+
+  m.def("grouped_topk_cpu(Tensor hidden_states, Tensor gating_input, int topk, bool renormalize, int num_expert_group, int topk_group) -> (Tensor, Tensor)");
+  IMPL_CPU(grouped_topk_cpu);
+
+  m.def("fused_experts_cpu(Tensor(a!) hidden_states, Tensor w1, Tensor w2, Tensor topk_weights, Tensor topk_ids, bool inplace, bool use_int8_w8a8, bool use_fp8_w8a16, Tensor? w1_scale, Tensor? w2_scale, int[]? block_size, Tensor? a1_scale, Tensor? a2_scale, bool is_vnni) -> Tensor");
+  IMPL_CPU(fused_experts_cpu);
+
+  m.def("shared_expert_cpu(Tensor hidden_states, Tensor w1, Tensor w2, Tensor fused_experts_out, float routed_scaling_factor, bool inplace, bool use_int8_w8a8, bool use_fp8_w8a16, Tensor? w1_scale, Tensor? w2_scale, int[]? block_size, Tensor? a1_scale, Tensor? a2_scale, bool is_vnni) -> Tensor");
+  IMPL_CPU(shared_expert_cpu);
 }
