@@ -131,6 +131,9 @@ struct tinygemm_kernel_vnni<at::BFloat16, BLOCK_M, BLOCK_N> {
     constexpr int COLS = BLOCK_N / 16;
     static_assert(COLS % 2 == 0);
 
+    // prefetch distance
+    constexpr int PREFETCH_SIZE_K = 64;
+
     __m512i va;
     __m512i vb0[COLS];
     __m512i vb1[COLS];
@@ -143,8 +146,8 @@ struct tinygemm_kernel_vnni<at::BFloat16, BLOCK_M, BLOCK_N> {
     __m512  vbs1[COLS];
 
     auto loadc = [&](auto i) {
-      vc0[i] = _mm512_set1_epi32(0);
-      vc1[i] = _mm512_set1_epi32(0);
+      vc0[i] = _mm512_setzero_epi32();
+      vc1[i] = _mm512_setzero_epi32();
     };
     Unroll<ROWS * COLS>{}(loadc);
 
@@ -161,10 +164,17 @@ struct tinygemm_kernel_vnni<at::BFloat16, BLOCK_M, BLOCK_N> {
 
       if constexpr (col == 0) {
         va = _mm512_set1_epi32(a_ptr[row * lda4 + k]);
+        if constexpr (PREFETCH_SIZE_K > 0) {
+          _mm_prefetch(a_ptr + row * lda4 + k + PREFETCH_SIZE_K, _MM_HINT_T0);
+        }
       }
       if constexpr (row == 0) {
         vb0[col] = _mm512_loadu_si512(b0_ptr + k * ldb4 + col * 16);
         vb1[col] = _mm512_loadu_si512(b1_ptr + k * ldb4 + col * 16);
+        if constexpr (PREFETCH_SIZE_K > 0) {
+          _mm_prefetch(b0_ptr + (k + PREFETCH_SIZE_K) * ldb4 + col * 16, _MM_HINT_T0);
+          _mm_prefetch(b1_ptr + (k + PREFETCH_SIZE_K) * ldb4 + col * 16, _MM_HINT_T0);
+        }
       }
       vc0[i] = _mm512_dpbusd_epi32(vc0[i], va, vb0[col]);
       vc1[i] = _mm512_dpbusd_epi32(vc1[i], va, vb1[col]);
@@ -295,6 +305,9 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
     constexpr int COLS = BLOCK_N / 16;
     static_assert(COLS % 2 == 0);
 
+    // prefetch distance
+    constexpr int PREFETCH_SIZE_K = 64;
+
     __m512i va;
     __m512i vb[COLS];
     __m512i vc[ROWS * COLS];
@@ -303,7 +316,7 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
     __m512  vbs[COLS];
 
     auto loadc = [&](auto i) {
-      vc[i] = _mm512_set1_epi32(0);
+      vc[i] = _mm512_setzero_epi32();
     };
     Unroll<ROWS * COLS>{}(loadc);
 
@@ -319,9 +332,15 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
 
       if constexpr (col == 0) {
         va = _mm512_set1_epi32(a_ptr[row * lda4 + k]);
+        if constexpr (PREFETCH_SIZE_K > 0) {
+          _mm_prefetch(a_ptr + row * lda4 + k + PREFETCH_SIZE_K, _MM_HINT_T0);
+        }
       }
       if constexpr (row == 0) {
         vb[col] = _mm512_loadu_si512(b_ptr + k * ldb4 + col * 16);
+        if constexpr (PREFETCH_SIZE_K > 0) {
+          _mm_prefetch(b_ptr + (k + PREFETCH_SIZE_K) * ldb4 + col * 16, _MM_HINT_T0);
+        }
       }
       vc[i] = _mm512_dpbusd_epi32(vc[i], va, vb[col]);
     };

@@ -27,7 +27,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     static_assert(COLS % 2 == 0);
 
     // prefetch distance
-    constexpr int PREFETCH_SIZE_K = 0;
+    constexpr int PREFETCH_SIZE_K = 64;
 
     __m512i va;
     __m512i vb[COLS];
@@ -50,7 +50,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     // 2) a + 128 is fused when dynamically quantize A
     //
     auto loadc = [&](auto i) {
-      vc[i] = _mm512_set1_epi32(0);
+      vc[i] = _mm512_setzero_epi32();
     };
     Unroll<ROWS * COLS>{}(loadc);
 
@@ -66,6 +66,9 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
 
       if constexpr (col == 0) {
         va = _mm512_set1_epi32(a_ptr[row * lda4 + k]);
+        if constexpr (PREFETCH_SIZE_K > 0) {
+          _mm_prefetch(a_ptr + row * lda4 + k + PREFETCH_SIZE_K, _MM_HINT_T0);
+        }
       }
       if constexpr (row == 0) {
         vb[col] = _mm512_loadu_si512(b_ptr + k * ldb4 + col * 16);
