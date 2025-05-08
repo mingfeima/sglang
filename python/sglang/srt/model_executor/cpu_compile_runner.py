@@ -386,7 +386,7 @@ class CpuCompileRunner:
             index = bisect.bisect_left(self.compile_bs, raw_bs)
         bs = self.compile_bs[index]
         if bs != raw_bs:
-            raise
+            # raise
             self.seq_lens.fill_(1)
             self.out_cache_loc.zero_()
 

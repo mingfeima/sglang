@@ -1,5 +1,6 @@
 #include <torch/extension.h>
 #include <ATen/record_function.h>
+#include <torch/csrc/distributed/c10d/GroupRegistry.hpp>
 
 #include "shm.h"
 
@@ -49,12 +50,12 @@ void initialize(int size, int rank) {
 
 void shm_allreduce(
     torch::Tensor& data,
-    c10::intrusive_ptr<c10d::ProcessGroup> process_group,
-    c10d::ReduceOp op) {
+    std::string group_name,
+    std::string op) {
   RECORD_FUNCTION(
       "sgl-kernel::shm_allreduce", std::vector<c10::IValue>({data}));
 
-  TORCH_CHECK(op == c10d::ReduceOp::SUM, "Only torch.distributed.ReduceOp.SUM is supported");
+  TORCH_CHECK(op == "sum", "Only torch.distributed.ReduceOp.SUM is supported");
 
   auto numel = data.numel();
 
@@ -75,6 +76,7 @@ void shm_allreduce(
   if (data_type_fallback || !all_ranks_local_p) {
     // Fallback to torch distributed allreduce
     std::vector<torch::Tensor> tensors = {data};
+    auto process_group = c10d::resolve_process_group(group_name);
     process_group->allreduce(tensors)->wait();
   } else {
     all_reduce_outer_loop(data, numel, data_size);
@@ -83,7 +85,7 @@ void shm_allreduce(
   return;
 }
 
-torch::Tensor shm_allgather(torch::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, int dim) {
+torch::Tensor shm_allgather(torch::Tensor& data, std::string group_name, int64_t dim) {
   RECORD_FUNCTION("sgl-kernel::shm_allgather", std::vector<c10::IValue>({data}));
 
   auto numel = data.numel();
@@ -107,6 +109,7 @@ torch::Tensor shm_allgather(torch::Tensor& data, c10::intrusive_ptr<c10d::Proces
   if (data_type_fallback || !all_ranks_local_p) {
     // Fallback to torch distributed allreduce
     std::vector<std::vector<torch::Tensor>> output_tensors(1);
+    auto process_group = c10d::resolve_process_group(group_name);
     auto world_size = process_group->getSize();
     for (int i = 0; i < world_size; i++) {
       output_tensors[0].push_back(torch::empty_like(data));

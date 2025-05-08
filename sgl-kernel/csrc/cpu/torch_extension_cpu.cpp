@@ -90,8 +90,8 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<at::Tensor>& kv_a_proj_scale, // qkv_proj_with_rope
     std::optional<std::vector<int64_t>> block_size, // qkv_proj_with_rope
     std::optional<at::Tensor>& bmm_scale, // bmm
-    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
-    std::optional<c10d::ReduceOp> op, // o_proj
+    std::optional<std::string> process_group, // o_proj
+    std::optional<std::string> op, // o_proj
     std::optional<at::Tensor>& o_proj_scale, // o_proj
     std::optional<std::vector<int64_t>> o_proj_block_size, // o_proj
     bool is_vnni  // qkv_proj_with_rope, bmm, o_proj
@@ -190,8 +190,8 @@ at::Tensor forward_moe_fused_cpu(
     std::optional<std::vector<int64_t>> shared_expert_block_size, // shared_expert
     std::optional<at::Tensor>& shared_expert_a1_scale, // shared_expert
     std::optional<at::Tensor>& shared_expert_a2_scale,     // shared_expert
-    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // all_reduce
-    std::optional<c10d::ReduceOp> op, // all_reduce
+    std::optional<std::string> process_group, // all_reduce
+    std::optional<std::string> op, // all_reduce
     bool is_vnni // MoEGate, experts, shared_expert
 );
 
@@ -207,10 +207,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> qkv_proj_with_rope( at::Tensor& h
 void initialize(int size, int rank);
 
 // shared mmeory all_reduce
-void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, c10d::ReduceOp op);
+void shm_allreduce(at::Tensor& data, std::string group_name, std::string op);
 
 // shared memory all_gather
-at::Tensor shm_allgather(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, int dim);
+at::Tensor shm_allgather(at::Tensor& data, std::string group_name, int64_t dim);
 
 // rope
 std::tuple<at::Tensor, at::Tensor> rotary_position_embedding_cpu(at::Tensor& t_pos, at::Tensor& q_pe,
@@ -319,4 +319,10 @@ TORCH_LIBRARY(sgl_kernel_cpu, m) {
 
   m.def("shared_expert_cpu(Tensor hidden_states, Tensor w1, Tensor w2, Tensor fused_experts_out, float routed_scaling_factor, bool inplace, bool use_int8_w8a8, bool use_fp8_w8a16, Tensor? w1_scale, Tensor? w2_scale, int[]? block_size, Tensor? a1_scale, Tensor? a2_scale, bool is_vnni) -> Tensor");
   IMPL_CPU(shared_expert_cpu);
+
+  m.def("shm_allreduce(Tensor(a!) data, str group_name, str op) -> ()");
+  IMPL_CPU(shm_allreduce);
+
+  m.def("shm_allgather(Tensor data, str group_name, int dim) -> Tensor");
+  IMPL_CPU(shm_allgather);
 }

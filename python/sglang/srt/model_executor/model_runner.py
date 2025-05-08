@@ -324,6 +324,11 @@ class ModelRunner:
                 os.environ["LOCAL_SIZE"] = str(self.tp_size)
                 shm_comm_op.initialize(self.tp_size, self.tp_rank)
 
+                # we have to register fake here since output shape depends on tp_size
+                @torch.library.register_fake("sgl_kernel_cpu::shm_allgather")
+                def _(data, group_name, dim):
+                    return torch.cat([data] * self.tp_size, dim=dim)
+
             # Only initialize the distributed environment on the target model worker.
             init_distributed_environment(
                 backend=backend,

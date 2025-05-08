@@ -43,7 +43,7 @@ extern at::Tensor fp8_scaled_mm_cpu(at::Tensor& mat1, at::Tensor& mat2, at::Tens
     std::vector<int64_t> block_size, const std::optional<at::Tensor>& bias,
     at::ScalarType out_dtype, bool is_vnni);
 
-extern void shm_allreduce(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup> process_group, c10d::ReduceOp op);
+extern void shm_allreduce(at::Tensor& data, std::string group_name, std::string op);
 
 extern std::tuple<at::Tensor, at::Tensor> grouped_topk_cpu(
     at::Tensor& hidden_states,
@@ -100,8 +100,8 @@ at::Tensor row_parallel_linear_forward(
     std::optional<at::Tensor>& bias,
     int tp_size,
     int tp_rank,
-    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group,
-    std::optional<c10d::ReduceOp> op,
+    std::optional<std::string> process_group,
+    std::optional<std::string> op,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
     at::ScalarType out_dtype,
@@ -180,8 +180,8 @@ at::Tensor forward_absorb_decode_fused_cpu(
     std::optional<at::Tensor>& kv_a_proj_scale, // qkv_proj_with_rope
     std::optional<std::vector<int64_t>> block_size, // qkv_proj_with_rope
     std::optional<at::Tensor>& bmm_scale, // bmm
-    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // o_proj
-    std::optional<c10d::ReduceOp> op, // o_proj
+    std::optional<std::string> process_group, // o_proj
+    std::optional<std::string> op, // o_proj
     std::optional<at::Tensor>& o_proj_scale, // o_proj
     std::optional<std::vector<int64_t>> o_proj_block_size, // o_proj
     bool is_vnni  // qkv_proj_with_rope, bmm, o_proj
@@ -325,8 +325,8 @@ at::Tensor forward_moe_fused_cpu(
     std::optional<std::vector<int64_t>> shared_expert_block_size, // shared_expert
     std::optional<at::Tensor>& shared_expert_a1_scale, // shared_expert
     std::optional<at::Tensor>& shared_expert_a2_scale,     // shared_expert
-    std::optional<c10::intrusive_ptr<c10d::ProcessGroup>> process_group, // all_reduce
-    std::optional<c10d::ReduceOp> op, // all_reduce
+    std::optional<std::string> process_group, // all_reduce
+    std::optional<std::string> op, // all_reduce
     bool is_vnni // MoEGate, experts, shared_expert
 ) {
   RECORD_FUNCTION("sgl-kernel::forward_moe_fused_cpu", std::vector<c10::IValue>({
