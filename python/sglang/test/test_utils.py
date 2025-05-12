@@ -447,16 +447,16 @@ def popen_launch_server(
     start_time = time.time()
     with requests.Session() as session:
         while time.time() - start_time < timeout:
-            
+
             # check if server process has crashe/exited
-            return_code = process.poll() 
+            return_code = process.poll()
             if return_code is not None:
                 # Server failed to start (non-zero exit code) or crashed
                 raise Exception(
                     f"Server process exited with code {return_code}. "
                     "Check server logs for errors."
                 )
-                
+
             try:
                 headers = {
                     "Content-Type": "application/json; charset=utf-8",
