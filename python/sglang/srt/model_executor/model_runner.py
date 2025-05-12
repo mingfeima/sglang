@@ -307,12 +307,12 @@ class ModelRunner:
 
         if not self.is_draft_worker:
             if self.device == "cpu":
-                # Bind OpenMP threads to CPU cores
-                if self.local_omp_cpuid != "all":
-                    torch.ops._C_utils.init_cpu_threads_env(self.local_omp_cpuid)
-
                 # Initialization of shm all_reduce
                 import sgl_kernel.common_ops
+
+                # Bind OpenMP threads to CPU cores
+                if self.local_omp_cpuid != "all":
+                    sgl_kernel.common_ops.init_cpu_threads_env(self.local_omp_cpuid)
 
                 shm_comm_op = sgl_kernel.common_ops
                 # Set local size to hint SGLang to use shared memory based AllReduce
