@@ -249,7 +249,7 @@ if cpu_fp8_ftz:
 if cpu_amx_int8:
     extra_compile_args["cxx"].append("-DSGLANG_CPU_AMX_INT8")
 
-libraries = ["c10", "torch", "torch_python"]
+libraries = ["c10", "torch", "torch_python", "numa"]
 cuda_libraries = ["cuda", "cublas"]
 cmdclass = {
     "build_ext": BuildExtension.with_options(use_ninja=True),
@@ -272,7 +272,7 @@ extra_link_args = ["-Wl,-rpath,$ORIGIN/../../torch/lib", "-L/usr/lib/x86_64-linu
 
 # https://github.com/pytorch/pytorch/issues/152243
 py_limited_api = version.parse(torch.__version__) < version.parse("2.7")
-
+conda_prefix = os.getenv("CONDA_PREFIX", "")
 ext_modules = [
     Extension(
         name="sgl_kernel.common_ops",
@@ -280,6 +280,7 @@ ext_modules = [
         include_dirs=include_dirs,
         extra_compile_args=extra_compile_args,
         libraries=libraries,
+        library_dirs=[os.path.join(conda_prefix, "lib")] if conda_prefix else [],
         extra_link_args=extra_link_args,
         py_limited_api=py_limited_api,
     ),
