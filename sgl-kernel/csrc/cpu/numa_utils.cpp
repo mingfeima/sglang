@@ -4,7 +4,6 @@
 #include <sched.h>
 
 #include "common.h"
-// #include "cpu_types.hpp"
 
 std::string init_cpu_threads_env(const std::string& cpu_ids) {
   bitmask* omp_cpu_mask = numa_parse_cpustring(cpu_ids.c_str());
@@ -49,8 +48,8 @@ std::string init_cpu_threads_env(const std::string& cpu_ids) {
 
   // OMP threads binding
   omp_set_num_threads((int)omp_cpu_ids.size());
-  torch::set_num_threads((int)omp_cpu_ids.size());
-  TORCH_CHECK_EQ(omp_cpu_ids.size(), torch::get_num_threads());
+  at::set_num_threads((int)omp_cpu_ids.size());
+  TORCH_CHECK_EQ(omp_cpu_ids.size(), at::get_num_threads());
   TORCH_CHECK_EQ(omp_cpu_ids.size(), omp_get_max_threads());
 
   std::vector<std::pair<int, int>> thread_core_mapping;
