@@ -132,7 +132,7 @@ struct tinygemm_kernel_vnni<at::BFloat16, BLOCK_M, BLOCK_N> {
     static_assert(COLS % 2 == 0);
 
     // prefetch distance
-    constexpr int PREFETCH_SIZE_K = 64;
+    constexpr int PREFETCH_SIZE_K = 0;
 
     __m512i va;
     __m512i vb0[COLS];
@@ -306,7 +306,7 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
     static_assert(COLS % 2 == 0);
 
     // prefetch distance
-    constexpr int PREFETCH_SIZE_K = 64;
+    constexpr int PREFETCH_SIZE_K = 0;
 
     __m512i va;
     __m512i vb[COLS];
