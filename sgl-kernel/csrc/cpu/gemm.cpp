@@ -122,7 +122,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
     constexpr int COLS = BLOCK_N / 16;
 
     // prefetch distance
-    constexpr int PREFETCH_SIZE_K = 32;
+    constexpr int PREFETCH_SIZE_K = 0;
 
     __m512bh va;
     __m512bh vb[COLS];
@@ -133,7 +133,7 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
       if constexpr (has_bias) {
         vc[i] = _mm512_loadu_ps(bias + col * 16);
       } else {
-        vc[i] = _mm512_setzero_ps();
+        vc[i] = _mm512_set1_ps(0.f);
       }
     };
     Unroll<ROWS * COLS>{}(loadc);
@@ -150,9 +150,6 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
 
       if constexpr (col == 0) {
         va = (__m512bh)(_mm512_set1_ps(a_ptr[row * lda2 + k]));
-        if constexpr (PREFETCH_SIZE_K > 0) {
-          _mm_prefetch(a_ptr + row * lda2 + k + PREFETCH_SIZE_K, _MM_HINT_T0);
-        }
       }
       if constexpr (row == 0) {
         vb[col] = (__m512bh)(_mm512_loadu_si512(b_ptr + k * ldb2 + col * 16));
