@@ -55,11 +55,13 @@ class SiluAndMul(CustomOp):
         silu_and_mul(x, out)
         return out
 
-    def forward_cpu(self, x: torch.Tensor) -> torch.Tensor:
-        if cpu_has_amx_support():
-            return sgl_kernel.cpu.silu_and_mul(x)
-        else:
-            return self.forward_native(x)
+    forward_cpu = staticmethod(sgl_kernel.cpu.silu_and_mul) if cpu_has_amx_support() else forward_native
+
+    # def forward_cpu(self, x: torch.Tensor) -> torch.Tensor:
+    #     if cpu_has_amx_support():
+    #         return sgl_kernel.cpu.silu_and_mul(x)
+    #     else:
+    #         return self.forward_native(x)
 
 
 class GeluAndMul(CustomOp):

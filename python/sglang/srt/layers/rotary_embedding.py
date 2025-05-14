@@ -20,6 +20,11 @@ from sglang.srt.cpu_utils import cpu_has_amx_support
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
+    _has_amx = True
+
+else:
+    _has_amx = False
+
 
 def _rotate_neox(x: torch.Tensor) -> torch.Tensor:
     x1 = x[..., : x.shape[-1] // 2]
@@ -727,7 +732,7 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         positions = torch.add(positions, offsets) if offsets is not None else positions
 
         # TODO: Add scenario of self.rotary_dim < self.head_size
-        if positions.device == torch.device("cpu") and cpu_has_amx_support():
+        if positions.device == torch.device("cpu") and _has_amx:
             return sgl_kernel.cpu.rotary_position_embedding(
                 positions, query, key, self.cos_sin_cache
             )

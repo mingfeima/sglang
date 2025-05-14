@@ -23,6 +23,11 @@ from sglang.srt.utils import get_compiler_backend
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
+    _has_amx = True
+
+else:
+    _has_amx = False
+
 
 def fused_topk_native(
     hidden_states: torch.Tensor,
@@ -182,7 +187,7 @@ def select_experts(
         assert num_expert_group is not None
         if correction_bias is None:
             device = hidden_states.device
-            if device == torch.device("cpu") and cpu_has_amx_support():
+            if device == torch.device("cpu") and _has_amx:
                 topk_weights, topk_ids = sgl_kernel.cpu.grouped_topk(
                     hidden_states,
                     router_logits,
@@ -202,7 +207,7 @@ def select_experts(
                 )
         else:
             device = hidden_states.device
-            if device == torch.device("cpu") and cpu_has_amx_support():
+            if device == torch.device("cpu") and _has_amx:
                 topk_weights, topk_ids = sgl_kernel.cpu.biased_grouped_topk(
                     hidden_states,
                     router_logits,

@@ -396,9 +396,11 @@ class GroupCoordinator:
             return input_
 
         if input_.is_cpu:
-            import intel_extension_for_pytorch as ipex
-
-            ipex.distributed.all_reduce(input_, group=self.device_group)
+            torch.ops.sgl_kernel_cpu.shm_allreduce(
+                input_,
+                self.device_group.group_name,
+                "sum",
+            )
             return input_
 
         if not supports_custom_op():
@@ -463,6 +465,13 @@ class GroupCoordinator:
         assert (
             -input_.dim() <= dim < input_.dim()
         ), f"Invalid dim ({dim}) for input tensor with shape {input_.size()}"
+
+        if input_.is_cpu:
+            return torch.ops.sgl_kernel_cpu.shm_allgather(
+                input_,
+                self.device_group.group_name,
+                dim,
+            )
 
         # For HPUs, use HPU communicator.
         hpu_comm = self.hpu_communicator

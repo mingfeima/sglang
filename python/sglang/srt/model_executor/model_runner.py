@@ -56,6 +56,7 @@ from sglang.srt.mem_cache.memory_pool import (
     TokenToKVPoolAllocator,
 )
 from sglang.srt.model_executor.cuda_graph_runner import CudaGraphRunner
+from sglang.srt.model_executor.cpu_compile_runner import CpuCompileRunner
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader import get_model
 from sglang.srt.model_loader.loader import (
@@ -213,6 +214,10 @@ class ModelRunner:
             self.init_cublas()
             self.init_attention_backend()
             self.init_cuda_graphs()
+        elif self.device == "cpu":
+            self.init_attention_backend()
+            self.init_cpu_compile()
+            self.cuda_graph_runner = None
         else:
             self.cuda_graph_runner = None
             self.init_attention_backend()
@@ -318,6 +323,11 @@ class ModelRunner:
                 # Set local size to hint SGLang to use shared memory based AllReduce
                 os.environ["LOCAL_SIZE"] = str(self.tp_size)
                 shm_comm_op.initialize(self.tp_size, self.tp_rank)
+
+                # we have to register fake here since output shape depends on tp_size
+                @torch.library.register_fake("sgl_kernel_cpu::shm_allgather")
+                def _(data, group_name, dim):
+                    return torch.cat([data] * self.tp_size, dim=dim)
 
             # Only initialize the distributed environment on the target model worker.
             init_distributed_environment(
@@ -914,6 +924,27 @@ class ModelRunner:
             f"avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
         )
 
+    def init_cpu_compile(self):
+        self.cpu_compile_runner = None
+
+        if not self.is_generation:
+            return
+
+        if not self.server_args.enable_torch_compile:
+            return
+
+        tic = time.time()
+        before_mem = get_available_gpu_memory(self.device, self.gpu_id)
+        logger.info(
+            f"CPU compile begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
+        )
+        self.cpu_compile_runner = CpuCompileRunner(self)
+        after_mem = get_available_gpu_memory(self.device, self.gpu_id)
+        logger.info(
+            f"CPU compile end. Time elapsed: {time.time() - tic:.2f} s. "
+            f"avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
+        )
+
     def apply_torch_tp(self):
         logger.info(f"Enabling torch tensor parallelism on {self.tp_size} devices.")
         from sglang.srt.model_parallel import tensor_parallel
@@ -970,6 +1001,13 @@ class ModelRunner:
             return self.cuda_graph_runner.replay(
                 forward_batch, skip_attn_backend_init=skip_attn_backend_init
             )
+
+        if (
+            forward_batch.forward_mode.is_decode()
+            and self.cpu_compile_runner is not None
+            and self.cpu_compile_runner.can_run(forward_batch)
+        ):
+            return self.cpu_compile_runner.replay(forward_batch)
 
         if forward_batch.forward_mode.is_decode():
             return self.forward_decode(forward_batch)
