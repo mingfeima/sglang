@@ -282,7 +282,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   // rope
   m.def("rotary_position_embedding_cpu", &rotary_position_embedding_cpu, "rotary position embedding for CPU");
-  
+
   // CPU and memory binding
   m.def("init_cpu_threads_env", &init_cpu_threads_env, "CPU and memory binding");
 }
