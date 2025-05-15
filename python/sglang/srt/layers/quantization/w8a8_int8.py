@@ -101,7 +101,7 @@ class W8A8Int8LinearMethod(LinearMethodBase):
                 )
                 cpu_wo_amx_warning_echoed = True
 
-        layer.weight = Parameter(layer.weight.t(), requires_grad=False)
+        layer.weight = Parameter(layer.weight.t().t(), requires_grad=False)
         layer.weight_scale = Parameter(layer.weight_scale.data, requires_grad=False)
 
     def create_weights(

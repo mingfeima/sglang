@@ -169,7 +169,7 @@ def per_token_quant_int8_cpu(x):
 
     return x_q, scale_x
 
-def native_w8a8_per_token_matmul(A, B, As, Bs, bias, output_dtype=torch.bfloat16):
+def native_w8a8_per_token_matmul(A, B, As, Bs, bias=None, output_dtype=torch.bfloat16):
     """Matrix multiplication function that supports per-token input quantization and per-column weight quantization"""
     A = A.to(torch.float32)
     B = B.to(torch.float32)
