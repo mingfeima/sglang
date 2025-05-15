@@ -31,6 +31,8 @@ if cpu_has_amx_support():
 
 logger = logging.getLogger(__name__)
 
+cpu_wo_amx_warning_echoed = False
+
 class W8A8Int8Config(QuantizationConfig):
     """Config class for W8A8 Int8 Quantization.
 
@@ -86,16 +88,18 @@ class W8A8Int8LinearMethod(LinearMethodBase):
         self.cpu_wo_amx_warning_echoed = False
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        global cpu_wo_amx_warning_echoed
         if layer.weight.device == torch.device("cpu"):
             if cpu_has_amx_support():
                 _process_weight_after_loading(layer, ["weight"])
                 return
-            elif not self.cpu_wo_amx_warning_echoed:
+            else:
+                layer.use_intel_amx_backend = False
+            if not cpu_wo_amx_warning_echoed:
                 logger.warning(
-                    "Running W8A8Int8LinearMethod on CPU without AMX support, \
-                     performance would be impacted."
+                    "Running W8A8Int8LinearMethod on CPU without AMX support, performance would be impacted."
                 )
-                self.cpu_wo_amx_warning_echoed = True
+                cpu_wo_amx_warning_echoed = True
 
         layer.weight = Parameter(layer.weight.t(), requires_grad=False)
         layer.weight_scale = Parameter(layer.weight_scale.data, requires_grad=False)
@@ -190,7 +194,6 @@ class W8A8Int8MoEMethod:
 
     def __init__(self, quant_config):
         self.quant_config = quant_config
-        self.cpu_wo_amx_warning_echoed = False
 
     def create_weights(
         self,
@@ -247,16 +250,18 @@ class W8A8Int8MoEMethod:
         layer.w2_input_scale = w2_input_scale
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        global cpu_wo_amx_warning_echoed
         if all(w.device.type == "cpu" for w in [layer.w13_weight, layer.w2_weight]):
             if cpu_has_amx_support():
                 _process_weight_after_loading(layer, ["w13_weight", "w2_weight"])
                 return
-            elif not self.cpu_wo_amx_warning_echoed:
+            else:
+                layer.use_intel_amx_backend = False
+            if not cpu_wo_amx_warning_echoed:
                 logger.warning(
-                    "Running W8A8Int8MoEMethod on CPU without AMX support, \
-                     performance would be impacted."
+                    "Running W8A8Int8MoEMethod on CPU without AMX support, performance would be impacted."
                 )
-                self.cpu_wo_amx_warning_echoed = True
+                cpu_wo_amx_warning_echoed = True
 
         layer.w13_weight = Parameter(layer.w13_weight, requires_grad=False)
         layer.w2_weight = Parameter(layer.w2_weight, requires_grad=False)
