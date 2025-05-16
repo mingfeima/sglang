@@ -159,6 +159,7 @@ def silu_and_mul(x: torch.Tensor) -> torch.Tensor:
     out = torch.nn.functional.silu(x[..., :d]) * x[..., d:]
     return out.to(dtype)
 
+
 def per_token_quant_int8_cpu(x):
     x = x.float()
     absmax = x.abs().max(dim=-1).values
@@ -168,6 +169,7 @@ def per_token_quant_int8_cpu(x):
     x_q = torch.round(x_q).to(torch.int8)
 
     return x_q, scale_x
+
 
 def native_w8a8_per_token_matmul(A, B, As, Bs, bias=None, output_dtype=torch.bfloat16):
     """Matrix multiplication function that supports per-token input quantization and per-column weight quantization"""
@@ -192,6 +194,7 @@ def native_w8a8_per_token_matmul(A, B, As, Bs, bias=None, output_dtype=torch.bfl
         C.add_(bias.view(1, -1))
 
     return C.reshape(origin_C_shape).to(output_dtype)
+
 
 def torch_w8a8_per_column_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids, topk):
     """This function performs fused moe with per-column int8 quantization using native torch."""
@@ -227,5 +230,7 @@ def torch_w8a8_per_column_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids, topk
             )
     # Apply routing weights and sum
     return (
-        out.view(B, -1, w2.shape[1]) * topk_weight.view(B, -1, 1).to(out.dtype)
-    ).sum(dim=1).to(a.dtype)
+        (out.view(B, -1, w2.shape[1]) * topk_weight.view(B, -1, 1).to(out.dtype))
+        .sum(dim=1)
+        .to(a.dtype)
+    )

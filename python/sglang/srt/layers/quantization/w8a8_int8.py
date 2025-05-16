@@ -1,7 +1,8 @@
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
-import logging
+
 from sglang.srt.utils import is_cuda_available, set_weight_attrs
 
 is_cuda = is_cuda_available()
@@ -13,9 +14,9 @@ from torch.nn.parameter import Parameter
 from sglang.srt.cpu_utils import (
     _process_weight_after_loading,
     cpu_has_amx_support,
-    per_token_quant_int8_cpu,
     native_w8a8_per_token_matmul,
-    torch_w8a8_per_column_moe
+    per_token_quant_int8_cpu,
+    torch_w8a8_per_column_moe,
 )
 from sglang.srt.distributed import get_tensor_model_parallel_world_size
 from sglang.srt.layers.linear import LinearMethodBase
@@ -32,6 +33,7 @@ if cpu_has_amx_support():
 logger = logging.getLogger(__name__)
 
 cpu_wo_amx_warning_echoed = False
+
 
 class W8A8Int8Config(QuantizationConfig):
     """Config class for W8A8 Int8 Quantization.
@@ -148,12 +150,7 @@ class W8A8Int8LinearMethod(LinearMethodBase):
         elif layer.weight.device == torch.device("cpu"):
             x_q, x_scale = per_token_quant_int8_cpu(x)
             return native_w8a8_per_token_matmul(
-                x_q,
-                layer.weight,
-                x_scale,
-                layer.weight_scale,
-                bias,
-                x.dtype
+                x_q, layer.weight, x_scale, layer.weight_scale, bias, x.dtype
             )
 
         x_q, x_scale = per_token_quant_int8(x)
@@ -327,7 +324,7 @@ class W8A8Int8MoEMethod:
                 layer.w2_weight_scale,
                 topk_weights,
                 topk_ids,
-                top_k
+                top_k,
             )
 
         return fused_experts(
