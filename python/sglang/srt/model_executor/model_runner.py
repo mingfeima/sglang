@@ -163,7 +163,13 @@ class ModelRunner:
         # Init OpenMP threads binding
         omp_cpuids = os.environ.get("SGLANG_CPU_OMP_THREADS_BIND", "all")
         if omp_cpuids == "all":
-            self.local_omp_cpuid = "all"
+            cpu_ids_by_node = get_cpu_ids_by_node()
+            n_numa_node = len(cpu_ids_by_node)
+
+            assert (
+                self.tp_size <= n_numa_node
+            ), f"tp_size {self.tp_size} should be smaller than number of numa node on the machine {n_numa_node}"
+            self.local_omp_cpuid = cpu_ids_by_node[self.tp_rank]
         else:
             self.local_omp_cpuid = omp_cpuids.split("|")[tp_rank]
 
@@ -311,20 +317,7 @@ class ModelRunner:
                 import sgl_kernel.common_ops
 
                 # Bind OpenMP threads to CPU cores
-                if self.local_omp_cpuid != "all":
-                    sgl_kernel.common_ops.init_cpu_threads_env(self.local_omp_cpuid)
-                else:
-                    # TODO: move this to be in __init__
-                    cpu_ids_by_node = get_cpu_ids_by_node()
-                    n_numa_node = len(cpu_ids_by_node)
-
-                    assert (
-                        self.tp_size <= n_numa_node
-                    ), f"tp_size {self.tp_size} should be smaller than number of numa node on the machine {n_numa_node}"
-                    selected_cpu_ids = cpu_ids_by_node[: self.tp_size]
-                    sgl_kernel.common_ops.init_cpu_threads_env(
-                        selected_cpu_ids[self.tp_rank]
-                    )
+                sgl_kernel.common_ops.init_cpu_threads_env(self.local_omp_cpuid)
 
                 shm_comm_op = sgl_kernel.common_ops
                 # Set local size to hint SGLang to use shared memory based AllReduce
