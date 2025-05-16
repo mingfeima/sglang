@@ -29,8 +29,6 @@ from sglang.srt.layers.quantization.int8_kernel import per_token_quant_int8
 if cpu_has_amx_support():
     import sgl_kernel.cpu
 
-logger = logging.getLogger(__name__)
-
 
 class W8A8Int8Config(QuantizationConfig):
     """Config class for W8A8 Int8 Quantization.
