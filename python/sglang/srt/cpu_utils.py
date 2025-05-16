@@ -217,7 +217,7 @@ def torch_w8a8_per_column_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids, topk
         if mask.sum():
             # First MLP layer: note that a_s is now per-token
             inter_out = native_w8a8_per_token_matmul(
-                a_q[mask], w1[i], a_s[mask], w1_s[i], output_dtype=torch.float32
+                a_q[mask], w1[i].t(), a_s[mask], w1_s[i], output_dtype=torch.float32
             )
             # Activation function
             act_out = silu_and_mul(inter_out)
@@ -225,7 +225,7 @@ def torch_w8a8_per_column_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids, topk
             act_out_q, act_out_s = per_token_quant_int8_cpu(act_out)
             # Second MLP layer
             out[mask] = native_w8a8_per_token_matmul(
-                act_out_q, w2[i], act_out_s, w2_s[i], output_dtype=torch.float32
+                act_out_q, w2[i].t(), act_out_s, w2_s[i], output_dtype=torch.float32
             )
     # Apply routing weights and sum
     return (
