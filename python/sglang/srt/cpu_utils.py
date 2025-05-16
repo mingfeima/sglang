@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import torch
@@ -233,3 +235,64 @@ def torch_w8a8_per_column_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids, topk
         .sum(dim=1)
         .to(a.dtype)
     )
+
+
+def parse_lscpu_topology():
+    # Get CPU topology: CPU,Core,Socket,Node
+    output = subprocess.check_output(["lscpu", "-p=CPU,Core,Socket,Node"], text=True)
+
+    # Parse only data lines (skip comments)
+    cpu_info = []
+    for line in output.splitlines():
+        if not line.startswith("#"):
+            cpu, core, socket, node = map(int, line.strip().split(","))
+            cpu_info.append((cpu, core, socket, node))
+    return cpu_info
+
+
+def get_physical_cpus_by_numa():
+    cpu_info = parse_lscpu_topology()
+
+    # Map NUMA node -> set of (core_id, socket) to avoid duplicates
+    physical_by_node = defaultdict(dict)  # node -> core_id -> cpu_id
+
+    for cpu, core, socket, node in cpu_info:
+        key = (core, socket)
+        if key not in physical_by_node[node]:
+            physical_by_node[node][
+                key
+            ] = cpu  # pick first CPU seen for that physical core
+
+    # Convert to list of physical CPUs per node
+    node_to_cpus = {}
+    for node, core_to_cpu in physical_by_node.items():
+        cpus = sorted(core_to_cpu.values())
+        node_to_cpus[node] = cpus
+
+    return node_to_cpus
+
+
+def compress_ranges(cpu_list):
+    """Compress sorted list of integers into range strings like 0-2,3,4-6"""
+    if not cpu_list:
+        return ""
+    ranges = []
+    start = prev = cpu_list[0]
+    for cpu in cpu_list[1:]:
+        if cpu == prev + 1:
+            prev = cpu
+        else:
+            ranges.append(f"{start}-{prev}" if start != prev else str(start))
+            start = prev = cpu
+    ranges.append(f"{start}-{prev}" if start != prev else str(start))
+    return ",".join(ranges)
+
+
+# Only physical cores are used. Logical cores are excluded.
+def get_cpu_ids_by_node():
+    node_to_cpus = get_physical_cpus_by_numa()
+    # Sort by NUMA node index
+    cpu_ids = [
+        compress_ranges(sorted(node_to_cpus[node])) for node in sorted(node_to_cpus)
+    ]
+    return cpu_ids

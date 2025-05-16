@@ -28,7 +28,7 @@ import torch.distributed as dist
 from sglang.srt.configs.device_config import DeviceConfig
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.configs.model_config import AttentionArch, ModelConfig
-from sglang.srt.cpu_utils import cpu_has_amx_support, update_config
+from sglang.srt.cpu_utils import cpu_has_amx_support, get_cpu_ids_by_node, update_config
 from sglang.srt.distributed import (
     get_tp_group,
     init_distributed_environment,
@@ -313,6 +313,18 @@ class ModelRunner:
                 # Bind OpenMP threads to CPU cores
                 if self.local_omp_cpuid != "all":
                     sgl_kernel.common_ops.init_cpu_threads_env(self.local_omp_cpuid)
+                else:
+                    # TODO: move this to be in __init__
+                    cpu_ids_by_node = get_cpu_ids_by_node()
+                    n_numa_node = len(cpu_ids_by_node)
+
+                    assert (
+                        self.tp_size <= n_numa_node
+                    ), f"tp_size {self.tp_size} should be smaller than number of numa node on the machine {n_numa_node}"
+                    selected_cpu_ids = cpu_ids_by_node[: self.tp_size]
+                    sgl_kernel.common_ops.init_cpu_threads_env(
+                        selected_cpu_ids[self.tp_rank]
+                    )
 
                 shm_comm_op = sgl_kernel.common_ops
                 # Set local size to hint SGLang to use shared memory based AllReduce
