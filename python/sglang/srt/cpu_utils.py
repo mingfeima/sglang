@@ -174,7 +174,7 @@ def per_token_quant_int8_cpu(x):
 def native_w8a8_per_token_matmul(A, B, As, Bs, bias=None, output_dtype=torch.bfloat16):
     """Matrix multiplication function that supports per-token input quantization and per-column weight quantization"""
     A = A.to(torch.float32)
-    B = B.to(torch.float32)
+    B = B.t().to(torch.float32)
 
     assert A.shape[-1] == B.shape[-1], "Dimension mismatch"
     assert B.ndim == 2 and B.is_contiguous(), "B must be a 2D contiguous tensor"
