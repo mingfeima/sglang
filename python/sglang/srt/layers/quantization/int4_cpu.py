@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 from torch import Tensor, nn
 
+from sglang.srt.cpu_utils import cpu_has_amx_support
 from sglang.srt.layers.linear import (
     LinearBase,
     LinearMethodBase,
@@ -23,6 +24,14 @@ from sglang.srt.layers.quantization.base_config import (
 from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
 from sglang.srt.utils import set_weight_attrs
 
+try:
+    import sgl_kernel.cpu
+
+    _has_amx = cpu_has_amx_support()
+
+except ImportError:
+    _has_amx = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,6 +50,7 @@ class Int4CPUConfig(QuantizationConfig):
         lm_head_quantized: bool,
         modules_to_not_convert: Optional[List[str]],
     ) -> None:
+        assert _has_amx
         super().__init__()
         self.group_size = group_size
         self.pack_factor = 8
@@ -110,6 +120,9 @@ class Int4CPUConfig(QuantizationConfig):
 
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
+        if not _has_amx:
+            return None
+
         quant_name = cls.get_name()
         can_convert = cls.is_compatible(hf_quant_cfg)
         is_valid_user_quant = user_quant is None or user_quant == quant_name
@@ -226,13 +239,14 @@ class Int4CPULinearMethod(LinearMethodBase):
         layer.num_groups = num_groups
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        qweight, scales_zeros = _autoawq_to_int4pack(
+        qweight, qzeros, scales = _autoawq_to_int4pack(
             layer.qweight.data, layer.qzeros.data, layer.scales.data
         )
-        del layer.qzeros
-        del layer.scales
         layer.qweight = nn.Parameter(qweight, requires_grad=False)
-        layer.scales_zeros = nn.Parameter(scales_zeros, requires_grad=False)
+        layer.qzeros = nn.Parameter(qzeros, requires_grad=False)
+        layer.scales = nn.Parameter(scales, requires_grad=False)
+        if getattr(layer, "bias", None) is not None:
+            layer.bias = nn.Parameter(layer.bias.data.float(), requires_grad=False)
 
         layer.use_intel_amx_backend = False
 
@@ -242,12 +256,9 @@ class Int4CPULinearMethod(LinearMethodBase):
         x: Tensor,
         bias: Optional[Tensor] = None,
     ):
-        out = torch._weight_int4pack_mm_for_cpu(
-            x, layer.qweight, self.quant_config.group_size, layer.scales_zeros
+        return sgl_kernel.cpu.int4_w4a16_linear(
+            x, layer.qweight, layer.qzeros, layer.scales, bias
         )
-        if bias is not None:
-            out = out + bias
-        return out
 
 
 class Int4CPUMoEMethod(FusedMoEMethodBase):
@@ -344,21 +355,19 @@ class Int4CPUMoEMethod(FusedMoEMethodBase):
         set_weight_attrs(w2_qzeros, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        w13_qweight, w13_scales_zeros = _autoawq_to_int4pack(
+        w13_qweight, w13_qzeros, w13_scales = _autoawq_to_int4pack(
             layer.w13_qweight.data, layer.w13_qzeros.data, layer.w13_scales.data
         )
-        del layer.w13_qzeros
-        del layer.w13_scales
         layer.w13_qweight = nn.Parameter(w13_qweight, requires_grad=False)
-        layer.w13_scales_zeros = nn.Parameter(w13_scales_zeros, requires_grad=False)
+        layer.w13_qzeros = nn.Parameter(w13_qzeros, requires_grad=False)
+        layer.w13_scales = nn.Parameter(w13_scales, requires_grad=False)
 
-        w2_qweight, w2_scales_zeros = _autoawq_to_int4pack(
+        w2_qweight, w2_qzeros, w2_scales = _autoawq_to_int4pack(
             layer.w2_qweight.data, layer.w2_qzeros.data, layer.w2_scales.data
         )
-        del layer.w2_qzeros
-        del layer.w2_scales
         layer.w2_qweight = nn.Parameter(w2_qweight, requires_grad=False)
-        layer.w2_scales_zeros = nn.Parameter(w2_scales_zeros, requires_grad=False)
+        layer.w2_qzeros = nn.Parameter(w2_qzeros, requires_grad=False)
+        layer.w2_scales = nn.Parameter(w2_scales, requires_grad=False)
 
         layer.use_intel_amx_backend = False
 
@@ -378,8 +387,7 @@ class Int4CPUMoEMethod(FusedMoEMethodBase):
         inplace: bool = True,
         no_combine: bool = False,
     ):
-        from sgl_kernel.cpu import silu_and_mul
-
+        assert activation == "silu"
         # Expert selection
         topk_weights, topk_ids = select_experts(
             hidden_states=x,
@@ -392,93 +400,47 @@ class Int4CPUMoEMethod(FusedMoEMethodBase):
             custom_routing_function=custom_routing_function,
             correction_bias=correction_bias,
         )
-
-        # Ref code from https://huggingface.co/deepseek-ai/DeepSeek-V2/blob/e0828e3cc0a03408724b80c3cc92c8e072db8d01/modeling_deepseek.py#L589
-        len_experts = layer.num_experts
-
-        cnts = topk_ids.new_zeros((topk_ids.shape[0], len_experts))
-        cnts.scatter_(1, topk_ids.to(torch.int64), 1)
-        tokens_per_expert = cnts.sum(dim=0)
-        idxs = topk_ids.view(-1).argsort()
-
-        sorted_tokens = x[idxs // topk_ids.shape[1]]
-        tokens_per_expert = tokens_per_expert.tolist()
-
-        if activation == "silu":
-            act = silu_and_mul
-        else:
-            raise ValueError(f"Unsupported activation: {activation=}")
-
-        outputs = []
-        start_idx = 0
-        for i, num_tokens in enumerate(tokens_per_expert):
-            end_idx = start_idx + num_tokens
-            if num_tokens == 0:
-                continue
-            tokens_for_this_expert = sorted_tokens[start_idx:end_idx]
-
-            gate_up = torch._weight_int4pack_mm_for_cpu(
-                tokens_for_this_expert,
-                layer.w13_qweight[i],
-                self.quant_config.group_size,
-                layer.w13_scales_zeros[i],
-            )
-            gate_up = act(gate_up)
-            expert_out = torch._weight_int4pack_mm_for_cpu(
-                gate_up,
-                layer.w2_qweight[i],
-                self.quant_config.group_size,
-                layer.w2_scales_zeros[i],
-            )
-            outputs.append(expert_out)
-            start_idx = end_idx
-
-        outs = torch.cat(outputs, dim=0) if len(outputs) else sorted_tokens.new_empty(0)
-        new_x = torch.empty_like(outs)
-
-        new_x[idxs] = outs
-        final_out = (
-            new_x.view(*topk_ids.shape, -1)
-            .type(topk_weights.dtype)
-            .mul_(topk_weights.unsqueeze(dim=-1))
-            .sum(dim=1)
-            .type(new_x.dtype)
+        return sgl_kernel.cpu.fused_experts(
+            x,
+            layer.w13_qweight,
+            layer.w2_qweight,
+            topk_weights,
+            topk_ids,
+            inplace=False,
+            use_int4_w4a16=True,
+            w1_scale=layer.w13_scales,
+            w2_scale=layer.w2_scales,
+            w1_zero=layer.w13_qzeros,
+            w2_zero=layer.w2_qzeros,
         )
-        return final_out
 
 
 def _autoawq_to_int4pack(qweight: Tensor, qzeros: Tensor, scales: Tensor):
-    """Convert AutoAWQ weight format to PyTorch's int4pack
+    """Convert AutoAWQ weight format to sgl-kernel's CPU int4
 
     Args:
         qweight: (*, K, N / 8), int32
         qzeros: (*, K / group_size, N / 8), int32
         scales: (*, K / group_size, N), bfloat16
     """
+    # unpack from AutoAWQ format
     # https://github.com/casper-hansen/AutoAWQ/blob/23d584c2/awq/modules/triton/gemm.py#L73-L86
     bitshifts = torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], dtype=torch.int32) * 4
-    qweight_unpacked = (qweight.unsqueeze(-1) >> bitshifts) & 0xF
-    qweight_unpacked = qweight_unpacked.flatten(-2).transpose(-1, -2).contiguous()
+    qweight = (qweight.unsqueeze(-1) >> bitshifts) & 0xF
+    qweight = qweight.flatten(-2).transpose(-1, -2).to(torch.uint8)
 
-    # PT int4pack_mm only supports zero_point in float domain, but AWQ uses integer domain.
-    # Hence, we need to convert zero_point to float domain.
-    # integer domain: w = (qweight - qzeros) * scales
-    #   float domain: w = (qweight - 8) * scales + zeros
-    qzeros_unpacked = (qzeros.unsqueeze(-1) >> bitshifts) & 0xF
-    qzeros_unpacked = qzeros_unpacked.flatten(-2)
-    zeros = ((8 - qzeros_unpacked.float()) * scales.float()).to(scales.dtype)
+    # convert to VNNI format: (*, N/BLOCK_N, K/2, BLOCK_N, 2)
+    BLOCK_N = 32  # must match what's used in the kernel
+    *dims, N, K = qweight.shape
+    qweight = qweight.reshape(*dims, N // BLOCK_N, BLOCK_N, K // 2, 2)
+    qweight = qweight.transpose(-3, -2)
 
-    if qweight_unpacked.ndim == 2:
-        qweight = torch._convert_weight_to_int4pack_for_cpu(qweight_unpacked, 1)
-    elif qweight_unpacked.ndim == 3:  # with experts
-        qweight = torch.stack(
-            [
-                torch._convert_weight_to_int4pack_for_cpu(qweight_unpacked[i], 1)
-                for i in range(qweight_unpacked.shape[0])
-            ],
-            dim=0,
-        )
-    else:
-        raise RuntimeError(f"Unsupported ndim={qweight_unpacked.ndim}")
-    scales_zeros = torch.stack([scales, zeros], dim=-1)  # (*, K / group_size, N, 2)
-    return qweight, scales_zeros
+    # bit packing
+    COUNT = 32
+    qweight = qweight.reshape(-1, COUNT * 2)
+    qweight = (qweight[:, COUNT:] << 4) | qweight[:, :COUNT]
+    qweight = qweight.reshape(*dims, N, K // 2)
+
+    qzeros = (qzeros.unsqueeze(-1) >> bitshifts) & 0xF
+    qzeros = qzeros.flatten(-2).to(torch.uint8)
+    return qweight, qzeros, scales

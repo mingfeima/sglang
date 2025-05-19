@@ -11,9 +11,12 @@ def fused_experts(
     inplace,
     use_int8_w8a8=False,
     use_fp8_w8a16=False,
+    use_int4_w4a16=False,
     w1_scale=None,
     w2_scale=None,
     block_size=None,
+    w1_zero=None,
+    w2_zero=None,
     a1_scale=None,
     a2_scale=None,
     is_vnni=True,
@@ -27,9 +30,12 @@ def fused_experts(
         inplace,
         use_int8_w8a8,
         use_fp8_w8a16,
+        use_int4_w4a16,
         w1_scale,
         w2_scale,
         block_size,
+        w1_zero,
+        w2_zero,
         a1_scale,
         a2_scale,
         is_vnni,
@@ -459,6 +465,18 @@ def int8_scaled_mm_with_quant(
 
 def per_token_quant_int8(x):
     return sgl_kernel.common_ops.per_token_quant_int8_cpu(x)
+
+
+def int4_w4a16_linear(
+    x,
+    weight,
+    weight_zeros,
+    weight_scales,
+    bias,
+):
+    return sgl_kernel.common_ops.int4_w4a16_linear_cpu(
+        x, weight, weight_zeros, weight_scales, bias
+    )
 
 
 def fp8_scaled_mm(
