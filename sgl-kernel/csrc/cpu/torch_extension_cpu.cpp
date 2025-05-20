@@ -223,6 +223,9 @@ at::Tensor shm_allgather(at::Tensor& data, c10::intrusive_ptr<c10d::ProcessGroup
 std::tuple<at::Tensor, at::Tensor> rotary_position_embedding_cpu(at::Tensor& t_pos, at::Tensor& q_pe,
     at::Tensor& k_pe, at::Tensor& t_emb_pos);
 
+// CPU and memory binding
+std::string init_cpu_threads_env(const std::string& cpu_ids);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   // activation
   m.def("silu_and_mul_cpu", &silu_and_mul_cpu, "SiLU and mul for CPU");
@@ -289,4 +292,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   // rope
   m.def("rotary_position_embedding_cpu", &rotary_position_embedding_cpu, "rotary position embedding for CPU");
+
+  // CPU and memory binding
+  m.def("init_cpu_threads_env", &init_cpu_threads_env, "CPU and memory binding");
 }
