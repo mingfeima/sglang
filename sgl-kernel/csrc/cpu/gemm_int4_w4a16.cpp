@@ -128,8 +128,8 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
         // Bs layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=bf16
         __m512i tmp2 = _mm512_loadu_si512(
             reinterpret_cast<const __m512i*>(Bs + kgs * strideBs + col * 16));
-        scales[col]   = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 0));
-        scales[col+1] = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 1));
+        scales[col]   = CVT_BF16_TO_FP32(_mm512_extracti32x8_epi32(tmp2, 0));
+        scales[col+1] = CVT_BF16_TO_FP32(_mm512_extracti32x8_epi32(tmp2, 1));
       }
     };
     auto compute = [&](auto i, int64_t k) {
@@ -262,8 +262,8 @@ inline void unpack_B(
         // Bs layout: [K/gs, BLOCK_N] : [strideBs, 1], dtype=bf16
         __m512i tmp2 = _mm512_loadu_si512(
             reinterpret_cast<const __m512i*>(Bs + kgs * strideBs + n));
-        __m512 scales_lo = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 0));
-        __m512 scales_hi = _mm512_cvtpbh_ps((__m256bh)_mm512_extracti32x8_epi32(tmp2, 1));
+        __m512 scales_lo = CVT_BF16_TO_FP32(_mm512_extracti32x8_epi32(tmp2, 0));
+        __m512 scales_hi = CVT_BF16_TO_FP32(_mm512_extracti32x8_epi32(tmp2, 1));
         scales[0] = _mm512_permutexvar_ps(s_idx0, scales_lo);
         scales[1] = _mm512_permutexvar_ps(s_idx1, scales_lo);
         scales[2] = _mm512_permutexvar_ps(s_idx0, scales_hi);
@@ -279,11 +279,14 @@ inline void unpack_B(
       vb_i8_lo = _mm256_sub_epi8(vb_i8_lo, zeros[0]);
       vb_i8_hi = _mm256_sub_epi8(vb_i8_hi, zeros[1]);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
       // convert to FP32 and apply scales
       __m512 vb_f32_00 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_lo, 0)) * scales[0];
       __m512 vb_f32_01 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_lo, 1)) * scales[1];
       __m512 vb_f32_10 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_hi, 0)) * scales[2];
       __m512 vb_f32_11 = CVT_INT8_TO_FP32(_mm256_extracti32x4_epi32(vb_i8_hi, 1)) * scales[3];
+#pragma GCC diagnostic pop
 
       __m512bh vb_bf16_0 = _mm512_cvtne2ps_pbh(vb_f32_01, vb_f32_00);
       __m512bh vb_bf16_1 = _mm512_cvtne2ps_pbh(vb_f32_11, vb_f32_10);
