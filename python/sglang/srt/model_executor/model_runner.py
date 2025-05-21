@@ -166,9 +166,11 @@ class ModelRunner:
             cpu_ids_by_node = get_cpu_ids_by_node()
             n_numa_node = len(cpu_ids_by_node)
 
-            assert (
-                self.tp_size <= n_numa_node
-            ), f"tp_size {self.tp_size} should be smaller than number of numa node on the machine {n_numa_node}"
+            assert self.tp_size <= n_numa_node, (
+                f"SGLANG_CPU_OMP_THREADS_BIND is not set, in this case, "
+                f"tp_size {self.tp_size} should be smaller than number of numa node on the machine {n_numa_node}. "
+                f"If you need tp_size to be larger than number of numa node, please set the CPU cores for each tp rank via SGLANG_CPU_OMP_THREADS_BIND explicitly."
+            )
             self.local_omp_cpuid = cpu_ids_by_node[self.tp_rank]
         else:
             self.local_omp_cpuid = omp_cpuids.split("|")[tp_rank]
