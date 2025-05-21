@@ -238,8 +238,13 @@ def torch_w8a8_per_column_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids, topk
 
 
 def parse_lscpu_topology():
-    # Get CPU topology: CPU,Core,Socket,Node
-    output = subprocess.check_output(["lscpu", "-p=CPU,Core,Socket,Node"], text=True)
+    try:
+        # Get CPU topology: CPU,Core,Socket,Node
+        output = subprocess.check_output(
+            ["lscpu", "-p=CPU,Core,Socket,Node"], text=True
+        )
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error running 'lscpu': {e}")
 
     # Parse only data lines (skip comments)
     cpu_info = []
