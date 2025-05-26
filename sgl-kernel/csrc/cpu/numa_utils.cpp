@@ -15,7 +15,7 @@ std::string init_cpu_threads_env(const std::string& cpu_ids) {
 
   constexpr int group_size = 8 * sizeof(*omp_cpu_mask->maskp);
 
-  for (int offset = 0; offset < omp_cpu_mask->size; offset += group_size) {
+  for (size_t  offset = 0; offset < omp_cpu_mask->size; offset += group_size) {
     unsigned long group_mask = omp_cpu_mask->maskp[offset / group_size];
     int i = 0;
     while (group_mask) {
@@ -51,8 +51,8 @@ std::string init_cpu_threads_env(const std::string& cpu_ids) {
   // OMP threads binding
   omp_set_num_threads((int)omp_cpu_ids.size());
   at::set_num_threads((int)omp_cpu_ids.size());
-  TORCH_CHECK_EQ(omp_cpu_ids.size(), at::get_num_threads());
-  TORCH_CHECK_EQ(omp_cpu_ids.size(), omp_get_max_threads());
+  TORCH_CHECK_EQ((int)omp_cpu_ids.size(), at::get_num_threads());
+  TORCH_CHECK_EQ((int)omp_cpu_ids.size(), omp_get_max_threads());
 
   std::vector<std::pair<int, int>> thread_core_mapping;
   thread_core_mapping.reserve(omp_cpu_ids.size());
