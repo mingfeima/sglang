@@ -114,11 +114,11 @@ at::Tensor row_parallel_linear_forward(
   RECORD_FUNCTION("sgl-kernel::row_parallel_linear_forward", std::vector<c10::IValue>({mat1, mat2}));
   // # Only fuse bias add into GEMM for rank 0 (this ensures that
   // # bias will not get added more than once in TP>1 case)
-  const bool has_bias = bias.has_value();
-  const float* bias_data = nullptr;
-  if (tp_rank == 0 && has_bias) {
-    bias_data = bias.value().data_ptr<float>();
-  }
+  // const bool has_bias = bias.has_value();
+  // const float* bias_data = nullptr;
+  // if (tp_rank == 0 && has_bias) {
+  //   bias_data = bias.value().data_ptr<float>();
+  // }
 
   at::Tensor output_parallel;
   if (use_int8_w8a8) {
