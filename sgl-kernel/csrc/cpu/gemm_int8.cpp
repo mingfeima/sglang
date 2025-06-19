@@ -204,18 +204,10 @@ struct brgemm {
     // copy from Ctmp to C
     for (int64_t m = 0; m < M; ++m) {
       float as = As[m];
-      // if constexpr (has_bias) {
-      //   copy_add_stub(C + m * ldc, Ctmp + m * BLOCK_N, Bcomp, Bs, bias, N, as);
-      // } else {
-      //   copy_stub(C + m * ldc, Ctmp + m * BLOCK_N, Bcomp, Bs, N, as);
-      // }
-      for (int64_t n = 0; n < N; ++n) {
-        float bs = Bs[n];
-        if constexpr (has_bias) {
-          C[m * ldc + n] = (Ctmp[m * BLOCK_N + n] - Bcomp[n]) * as * bs + bias[n];
-        } else {
-          C[m * ldc + n] = (Ctmp[m * BLOCK_N + n] - Bcomp[n]) * as * bs;
-        }
+      if constexpr (has_bias) {
+        copy_add_stub(C + m * ldc, Ctmp + m * BLOCK_N, Bcomp, Bs, bias, N, as);
+      } else {
+        copy_stub(C + m * ldc, Ctmp + m * BLOCK_N, Bcomp, Bs, N, as);
       }
     }
   }
@@ -300,16 +292,17 @@ void int8_scaled_mm_kernel_impl(
   // K + 4 after compensation
   const int64_t packed_row_size = get_row_size<int8_t>(K);
 
+  // l2 cache block for n
+  int64_t cache_blocks_nb = get_cache_blocks<scalar_t>(BLOCK_N, K);
   AT_DISPATCH_BOOL(bias != nullptr, has_bias, [&] {
-    at::parallel_for(0, MB * NB, 0, [&](int64_t begin, int64_t end) {
-      int64_t mb{0}, nb{0};
-      data_index_init(begin, mb, MB, nb, NB);
+    parallel_2d(MB, NB, [&](int64_t begin_mb, int64_t end_mb, int64_t begin_nb, int64_t end_nb) {
 
       // for brgemm, use int32_t for accumulate
       alignas(64) int32_t Ctmp[BLOCK_M * BLOCK_N];
 
-      for (int i = begin; i < end; ++i) {
-        UNUSED(i);
+      for (int64_t nbb = begin_nb; nbb < end_nb; nbb += cache_blocks_nb) {
+      for (int64_t mb = begin_mb; mb < end_mb; ++mb) {
+      for (int64_t nb = nbb; nb < std::min(nbb + cache_blocks_nb, end_nb); ++nb) {
         int mb_start = mb * BLOCK_M;
         int mb_size = std::min(M - mb_start, BLOCK_M);
         int nb_start = nb * BLOCK_N;
@@ -331,10 +324,7 @@ void int8_scaled_mm_kernel_impl(
             /* ldc */ N,
             /* brg */ use_brgemm);
 
-        // move to the next index
-        data_index_step(mb, MB, nb, NB);
-      }
-
+      }}}
       if (use_brgemm) {
         at::native::cpublas::brgemm_release();
       }
