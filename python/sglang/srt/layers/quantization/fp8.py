@@ -1,25 +1,12 @@
 # Adapted from https://github.com/vllm-project/vllm/blob/v0.6.4.post1/vllm/model_executor/layers/quantization/fp8.py
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from torch.nn import Module
 from torch.nn.parameter import Parameter
-from vllm import _custom_ops as ops
-from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
-from vllm.model_executor.layers.quantization.utils.marlin_utils_fp8 import (
-    apply_fp8_marlin_linear,
-    prepare_fp8_layer_for_marlin,
-)
-from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
-from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
-    all_close_1d,
-    convert_to_channelwise,
-    per_tensor_dequantize,
-    requantize_with_max_scale,
-)
 
 from sglang.srt.cpu_utils import _process_weight_after_loading, cpu_has_amx_support
 from sglang.srt.distributed import get_tensor_model_parallel_world_size
@@ -52,6 +39,19 @@ from sglang.srt.utils import (
     permute_weight,
     print_warning_once,
     set_weight_attrs,
+)
+from vllm import _custom_ops as ops
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
+from vllm.model_executor.layers.quantization.utils.marlin_utils_fp8 import (
+    apply_fp8_marlin_linear,
+    prepare_fp8_layer_for_marlin,
+)
+from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
+from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
+    all_close_1d,
+    convert_to_channelwise,
+    per_tensor_dequantize,
+    requantize_with_max_scale,
 )
 
 if cpu_has_amx_support():
@@ -136,9 +136,8 @@ class Fp8Config(QuantizationConfig):
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["QuantizeMethodBase"]:
-        from vllm.attention.layer import Attention  # Avoid circular import
-
         from sglang.srt.layers.moe.fused_moe_triton import FusedMoE
+        from vllm.attention.layer import Attention  # Avoid circular import
 
         if isinstance(layer, LinearBase):
             if is_layer_skipped(prefix, self.ignored_layers):
@@ -152,6 +151,40 @@ class Fp8Config(QuantizationConfig):
 
     def get_scaled_act_names(self) -> List[str]:
         return []
+
+
+def requantize_with_max_scale_cpu(
+    weight: torch.Tensor, weight_scale: torch.Tensor, logical_widths: List[int]
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # Max scale to be used for requanitzation.
+    max_w_scale = weight_scale.max()
+
+    # QKV / MLP is fused in the on disk checkpoint if any of the
+    # weight scales are still set to the default since we initialize
+    # N weight scales for N shards but we only load 1 weight scale
+    # from disk in this case. Skip requantization in this case (since)
+    # we already are quantized with the single scale.
+    # * Sample Model: nm-testing/Phi-3-mini-128k-instruct-FP8
+    unfused_module_in_checkpoint = (
+        weight_scale[-1] > torch.finfo(torch.float8_e4m3fn).min
+    )
+
+    # If unfused checkpoint, need requanize with the single scale.
+    if unfused_module_in_checkpoint:
+        start = 0
+        for idx, logical_width in enumerate(logical_widths):
+            end = start + logical_width
+            weight_dq = per_tensor_dequantize(weight[start:end, :], weight_scale[idx])
+            # weight[start:end, :], _ = ops.scaled_fp8_quant(
+            #     weight_dq, max_w_scale)
+            weight[start:end, :] = torch.clamp(
+                (weight_dq / max_w_scale),
+                torch.finfo(torch.float8_e4m3fn).min,
+                torch.finfo(torch.float8_e4m3fn).max,
+            ).to(torch.float8_e4m3fn)
+            start = end
+
+    return max_w_scale, weight
 
 
 class Fp8LinearMethod(LinearMethodBase):
@@ -366,14 +399,14 @@ class Fp8LinearMethod(LinearMethodBase):
                     if input_scale is not None:
                         layer.input_scale = Parameter(input_scale, requires_grad=False)
 
-                weight_scale, weight = requantize_with_max_scale(
+                weight_scale, weight = requantize_with_max_scale_cpu(
                     weight=weight,
                     weight_scale=weight_scale,
                     logical_widths=layer.logical_widths,
                 )
 
             # Update layer with new values.
-            layer.weight = Parameter(weight.t(), requires_grad=False)
+            layer.weight = Parameter(weight.t().contiguous(), requires_grad=False)
             layer.weight_scale = Parameter(weight_scale, requires_grad=False)
             if self.quant_config.activation_scheme == "static":
                 layer.input_scale = Parameter(
@@ -421,6 +454,23 @@ class Fp8LinearMethod(LinearMethodBase):
                 weight_scale=layer.weight_scale_inv,
                 input_scale=None,
                 bias=bias,
+            )
+        if self.quant_config.activation_scheme == "static":
+            q_input = torch.ops.quantized_decomposed.quantize_per_tensor(
+                input=x,
+                scale=layer.input_scale,
+                zero_point=0,
+                quant_min=int(torch.finfo(torch.float8_e4m3fn).min),
+                quant_max=int(torch.finfo(torch.float8_e4m3fn).max),
+                dtype=torch.float8_e4m3fn,
+            )
+            return torch._scaled_mm(
+                q_input,
+                layer.weight,
+                bias=bias,
+                out_dtype=x.dtype,
+                scale_a=layer.input_scale,
+                scale_b=layer.weight_scale,
             )
 
         return apply_fp8_linear(
