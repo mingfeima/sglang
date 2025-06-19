@@ -1281,10 +1281,11 @@ at::Tensor shared_expert_cpu(
   // for int8 w8a8:
   //   3. Aq_tmp : [M, K] or [M, N]
   //   4. As_tmp : [M]
+  //   5. C_spiltk_tmp: [spiltk_num * 2 * M * N]
   //
   // for fp8 w8a16:
-  //   5. intermediate_cache0 : [M, 2N]
-  //   6. B_tmp: [T, BLOCK_M, max(K, N)]
+  //   6. intermediate_cache0 : [M, 2N]
+  //   7. B_tmp: [T, BLOCK_M, max(K, N)]
   //
   int num_threads = at::get_num_threads();
   int64_t buffer_size_nbytes = M * N * 2 + num_threads * 2 * BLOCK_M * BLOCK_N * sizeof(float);
@@ -1305,6 +1306,10 @@ at::Tensor shared_expert_cpu(
       uint8_t* __restrict__ Aq_tmp = (uint8_t*)((void*)(C_tmp + num_threads * 2 * BLOCK_M * BLOCK_N));
       float* __restrict__ As_tmp = (float*)((void*)(Aq_tmp + std::max(M * K, M * N)));
 
+      constexpr int64_t SPLITK_NUM = get_splitk_num();
+      auto buffer_splitk = at::empty({SPLITK_NUM * 2 * M * N}, hidden_states.options().dtype(at::kFloat));
+      float* __restrict__ C_spiltk_tmp = (float*)buffer_splitk.data_ptr<float>();
+
       auto w1s = w1_scale.value();
       auto w2s = w2_scale.value();
       TORCH_CHECK(w1s.numel() == 2 * N);
@@ -1314,6 +1319,7 @@ at::Tensor shared_expert_cpu(
           out_hidden_states.data_ptr<scalar_t>(),
           intermediate_cache1,
           C_tmp,
+          C_spiltk_tmp,
           Aq_tmp,
           As_tmp,
           hidden_states.data_ptr<scalar_t>(),

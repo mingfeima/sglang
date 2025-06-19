@@ -10,7 +10,7 @@
 // block size for AMX gemm
 constexpr int block_size_m() { return 2 * TILE_M; }
 constexpr int block_size_n() { return 2 * TILE_N; }
-
+constexpr int get_splitk_num() { return 4; }
 // define threshold using brgemm (intel AMX)
 template <typename T> inline bool can_use_brgemm(int M);
 template <> inline bool can_use_brgemm<at::BFloat16>(int M) { return M > 4; }
@@ -130,6 +130,7 @@ void shared_expert_int8_kernel_impl(
     scalar_t* __restrict__ output,
     scalar_t* __restrict__ ic1,
     float* __restrict__ C_tmp,
+    float* __restrict__ C_splitk_tmp,
     uint8_t* __restrict__ Aq_tmp,
     float* __restrict__ As_tmp,
     const scalar_t* __restrict__ input,
