@@ -40,6 +40,28 @@ inline void copy_mul_stub(scalar_t* __restrict__ out, const float* __restrict__ 
   }
 }
 
+inline void copy_stub(float* __restrict__ out, const int32_t* __restrict__ input, const int32_t* __restrict__ bcomp, const float* __restrict__ Bs, int64_t size, float scale) {
+  using fVec = at::vec::Vectorized<float>;
+  using iVec = at::vec::Vectorized<int32_t>;
+  constexpr int kVecSizef = fVec::size();
+  constexpr int kVecSizei = iVec::size();
+
+  int64_t d;
+  #pragma GCC unroll 4
+  for (d = 0; d <= size - kVecSizei; d += kVecSizei) {
+    iVec input_vec = iVec::loadu(input + d);
+    iVec bcomp_vec = iVec::loadu(bcomp + d);
+    fVec bs_vec = fVec::loadu(Bs + d);
+    fVec scale_vec = fVec(scale);
+    fVec data = convert<float>(input_vec - bcomp_vec) * scale_vec * bs_vec;
+    data.store(out + d);
+  }
+  for (; d < size; ++d) {
+    out[d] = static_cast<float>((input[d]-bcomp[d]) * scale * Bs[d]);
+  }
+}
+
+
 // acc from [topk, K] to [K]
 template <typename scalar_t>
 inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t topk, int64_t K) {
@@ -244,7 +266,8 @@ void tinygemm_kernel(
     int64_t K,
     int64_t lda,
     int64_t ldb,
-    int64_t ldc) {
+    int64_t ldc,
+    bool brg) {
 
   const int32_t* Bcomp0 = reinterpret_cast<const int32_t*>(B0 + block_size_n() * K);
   const int32_t* Bcomp1 = reinterpret_cast<const int32_t*>(B1 + block_size_n() * K);
@@ -363,10 +386,32 @@ struct tinygemm_kernel_vnni2<at::BFloat16, BLOCK_M, BLOCK_N> {
         K, lda, ldb, ldc);
 
 template <typename scalar_t>
+struct brgemm {
+  static inline void apply(
+      const uint8_t* __restrict__ A, const int8_t* __restrict__ B, float* __restrict__ C,
+      int32_t* __restrict__ Ctmp, const int32_t* __restrict__ Bcomp, const float* __restrict__ As,
+      const float* __restrict__ Bs, int64_t M, int64_t N, int64_t K, int64_t lda, int64_t ldb,
+      int64_t ldc) {
+
+    constexpr int BLOCK_N = block_size_n();
+    at::native::cpublas::brgemm(
+        M, N, K, lda, ldb, BLOCK_N, /* add_C */false,
+        A, B, Ctmp);
+
+    // copy from Ctmp to C
+    for (int64_t m = 0; m < M; ++m) {
+      float as = As[m];
+      copy_stub(C + m * ldc, Ctmp + m * BLOCK_N, Bcomp, Bs, N, as);
+    }
+  }
+};
+
+template <typename scalar_t>
 void tinygemm_kernel(
     const uint8_t* __restrict__ A,
     const int8_t* __restrict__ B,
     float* __restrict__ C,
+    int32_t* __restrict__ Ctmp,
     const float* __restrict__ As,
     const float* __restrict__ Bs,
     int64_t M,
@@ -374,11 +419,15 @@ void tinygemm_kernel(
     int64_t K,
     int64_t lda,
     int64_t ldb,
-    int64_t ldc) {
+    int64_t ldc,
+    bool brg) {
 
   // B compensation
   const int32_t* Bcomp = reinterpret_cast<const int32_t*>(B + block_size_n() * K);
-
+  if (brg) {
+    brgemm<scalar_t>::apply(A, B, C, Ctmp, Bcomp, As, Bs, M, N, K, lda, ldb, ldc);
+    return;
+  }
   // pattern: 1-4-16
   constexpr int64_t BLOCK_M = 4;
   constexpr int64_t BLOCK_N = 64;
@@ -457,6 +506,9 @@ void fused_experts_int8_kernel_impl(
 
   const int64_t stride_e = 2 * N * packed_K;
   const int64_t stride_n = packed_K;
+
+  const bool use_brgemm = M > 4;
+
   // here we only parallel on half of 2N to fuse silu_and_mul with gemm
   at::parallel_for(0, MB * NB, 0, [&](int64_t begin, int64_t end) {
     // get local pointers
@@ -505,7 +557,8 @@ void fused_experts_int8_kernel_impl(
           /* K     */ K,
           /* lda   */ K,
           /* ldb   */ n_size,
-          /* ldc   */ N);
+          /* ldc   */ N,
+          /* brg   */ use_brgemm);
     }
   });
 
@@ -535,6 +588,8 @@ void fused_experts_int8_kernel_impl(
     int tid = at::get_thread_num();
     // we won't be using C1 for gemm2
     float* __restrict__ C = C_tmp + tid * 2 * BLOCK_M * BLOCK_N;
+    // for brgemm, use int32_t for accumulate
+    alignas(64) int32_t Ctmp2[BLOCK_M * BLOCK_N];
 
     for (int64_t i = begin; i < end; ++i) {
       int64_t mb = i / NB2;
@@ -559,6 +614,7 @@ void fused_experts_int8_kernel_impl(
           /* A     */ A,
           /* B     */ B,
           /* C     */ C,
+          /* Ctmp  */ Ctmp2,
           /* As    */ As,
           /* Bs    */ Bs,
           /* M     */ m_size,
@@ -566,7 +622,8 @@ void fused_experts_int8_kernel_impl(
           /* K     */ IC,
           /* lda   */ IC,
           /* ldb   */ n_size,
-          /* ldc   */ BLOCK_N);
+          /* ldc   */ BLOCK_N,
+          /* brg   */ use_brgemm);
 
       // 2.b copy from C to ic2 in original order
       //   and also mul topk_weights in float32
@@ -646,6 +703,7 @@ void shared_expert_int8_kernel_impl(
   const int64_t packed_N = get_row_size<int8_t>(N);
   const int64_t stride_n = packed_K;
 
+  const bool use_brgemm = M > 4;
   // here we only parallel on half of 2N to fuse silu_and_mul with gemm
   at::parallel_for(0, MB * NB, 0, [&](int64_t begin, int64_t end) {
     for (int64_t i = begin; i < end; ++i) {
@@ -681,7 +739,8 @@ void shared_expert_int8_kernel_impl(
           /* K     */ K,
           /* lda   */ K,
           /* ldb   */ n_size,
-          /* ldc   */ N);
+          /* ldc   */ N,
+          /* brg   */ use_brgemm);
     }
   });
 
@@ -710,6 +769,8 @@ void shared_expert_int8_kernel_impl(
     int tid = at::get_thread_num();
     // we won't be using C1 for gemm2
     float* __restrict__ C = C_tmp + tid * 2 * BLOCK_M * BLOCK_N;
+    // for brgemm, use int32_t for accumulate
+    alignas(64) int32_t Ctmp2[BLOCK_M * BLOCK_N];
 
     for (int64_t i = begin; i < end; ++i) {
       int64_t mb = i / NB2;
@@ -731,6 +792,7 @@ void shared_expert_int8_kernel_impl(
           /* A     */ A,
           /* B     */ B,
           /* C     */ C,
+          /* Ctmp  */ Ctmp2,
           /* As    */ As,
           /* Bs    */ Bs,
           /* M     */ m_size,
@@ -738,7 +800,8 @@ void shared_expert_int8_kernel_impl(
           /* K     */ IC,
           /* lda   */ IC,
           /* ldb   */ n_size,
-          /* ldc   */ BLOCK_N);
+          /* ldc   */ BLOCK_N,
+          /* brg   */ use_brgemm);
 
       // 2.b copy from C to output and add fused_experts_out
       scalar_t* __restrict__ out = output + mb * BLOCK_M * K + nb * BLOCK_N;
