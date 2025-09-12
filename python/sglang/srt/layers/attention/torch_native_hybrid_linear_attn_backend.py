@@ -384,7 +384,7 @@ class MambaAttnBackend(AttentionBackend):
         query_start_loc = self.forward_metadata.query_start_loc
         cache_indices = self.forward_metadata.mamba_cache_indices
         mixed_qkv = torch_causal_conv1d_update(
-            mixed_qkv.unsqueeze(0).transpose(1,2),
+            mixed_qkv.unsqueeze(1).transpose(1,2),
             conv_states[cache_indices],
             conv_weights,
             bias,
@@ -412,10 +412,11 @@ class MambaAttnBackend(AttentionBackend):
         if num_value_heads // num_heads > 1:
             query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
             key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
+        batch_size = query_start_loc.shape[0] - 1
         core_attn_out, _ = torch_recurrent_gated_delta_rule(
-            query=query,
-            key=key,
-            value=value,
+            query=query.transpose(0,1).view(batch_size, -1, *query.shape[2:]),
+            key=key.transpose(0,1).view(batch_size, -1, *key.shape[2:]),
+            value=value.transpose(0, 1).view(batch_size, -1, *value.shape[2:]),
             g=g.unsqueeze(0),
             beta=beta.unsqueeze(0),
             initial_state=ssm_states[cache_indices],
@@ -483,7 +484,7 @@ class MambaAttnBackend(AttentionBackend):
             conv_weights,
             bias,
             activation=activation,
-            initial_states=conv_states_to_use if has_initial_states else None,
+            initial_states=conv_states_to_use if has_initial_states[0] else None,
         ).transpose(0, 1)[:seq_len]
 
         key_split_dim = key_dim // attn_tp_size
@@ -526,16 +527,18 @@ class MambaAttnBackend(AttentionBackend):
             if num_value_heads // num_heads > 1:
                 query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
                 key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
+            batch_size = query_start_loc.shape[0] - 1
             core_attn_out, last_recurrent_state = torch_chunk_gated_delta_rule(
-                query=query,
-                key=key,
-                value=value,
-                g=g,
-                beta=beta,
+                query=query.view(batch_size, -1, *query.shape[2:]),
+                key=key.view(batch_size, -1, *key.shape[2:]),
+                value=value.view(batch_size, -1, *value.shape[2:]),
+                g=g.view(batch_size, -1, *g.shape[2:]),
+                beta=beta.view(batch_size, -1, *beta.shape[2:]),
                 initial_state=recurrent_state,
                 output_final_state=True,
                 use_qk_l2norm_in_kernel=True,
             )
+            core_attn_out = core_attn_out.view(1, -1, num_value_heads, head_v_dim)
             last_recurrent_state = last_recurrent_state.to(ssm_states.dtype, copy=False)
             ssm_states[cache_indices] = last_recurrent_state
 
