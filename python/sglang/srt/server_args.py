@@ -87,6 +87,7 @@ ATTENTION_BACKEND_CHOICES = [
     # Common
     "triton",
     "torch_native",
+    "torch_native_hybrid_linear_attn",
     # NVIDIA specific
     "cutlass_mla",
     "fa3",

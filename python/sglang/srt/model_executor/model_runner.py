@@ -308,7 +308,10 @@ class ModelRunner:
         if self.is_hybrid_gdn:
             logger.warning("Hybrid GDN model detected, disable radix cache")
             self.server_args.disable_radix_cache = True
-            self.server_args.attention_backend = "hybrid_linear_attn"
+            if self.server_args.device == "cpu":
+                self.server_args.attention_backend = "torch_native_hybrid_linear_attn"
+            else:
+                self.server_args.attention_backend = "hybrid_linear_attn"
             if self.server_args.max_mamba_cache_size is None:
                 if self.server_args.max_running_requests is not None:
                     self.server_args.max_mamba_cache_size = (
@@ -1693,6 +1696,24 @@ class ModelRunner:
             )
 
             return DualChunkFlashAttentionBackend(self)
+        elif backend_str == "torch_native_hybrid_linear_attn":
+            assert (
+                self.is_hybrid_gdn
+            ), "hybrid_linear_attn backend can only be used with hybrid GDN models."
+            from sglang.srt.layers.attention.torch_native_backend import (
+                TorchNativeAttnBackend,
+            )
+            from sglang.srt.layers.attention.torch_native_hybrid_linear_attn_backend import (
+                HybridLinearAttnBackend,
+                MambaAttnBackend,
+            )
+
+            full_attn_backend = TorchNativeAttnBackend(self)
+            linear_attn_backend = MambaAttnBackend(self)
+            full_attn_layers = self.model_config.hf_config.full_attention_layer_ids
+            return HybridLinearAttnBackend(
+                full_attn_backend, linear_attn_backend, full_attn_layers
+            )
         elif backend_str == "hybrid_linear_attn":
             assert (
                 self.is_hybrid_gdn

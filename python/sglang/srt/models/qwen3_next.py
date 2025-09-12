@@ -22,7 +22,7 @@ from sglang.srt.layers.dp_attention import (
     get_attention_tp_size,
     is_dp_attention_enabled,
 )
-from sglang.srt.layers.layernorm import GemmaRMSNorm, RMSNorm
+from sglang.srt.layers.layernorm import GemmaRMSNorm, RMSNorm, Qwen3NextRMSNormGated
 from sglang.srt.layers.linear import (
     ColumnParallelLinear,
     MergedColumnParallelLinear,
@@ -46,10 +46,11 @@ from sglang.srt.model_loader.weight_utils import (
     sharded_weight_loader,
 )
 from sglang.srt.models.qwen2_moe import Qwen2MoeMLP, Qwen2MoeSparseMoeBlock
-from sglang.srt.utils import add_prefix, is_cuda, make_layers, set_weight_attrs
+from sglang.srt.utils import add_prefix, is_cuda, is_cpu, make_layers, set_weight_attrs
 
 logger = logging.getLogger(__name__)
 _is_cuda = is_cuda()
+_is_cpu = is_cpu()
 
 import triton
 import triton.language as tl
@@ -321,15 +322,17 @@ class Qwen3GatedDeltaNet(nn.Module):
 
         set_weight_attrs(self.A_log, {"weight_loader": sharded_weight_loader(0)})
         set_weight_attrs(self.dt_bias, {"weight_loader": sharded_weight_loader(0)})
-
-        self.norm = RMSNormGated(
-            self.head_v_dim,
-            eps=self.layer_norm_epsilon,
-            group_size=None,
-            norm_before_gate=True,
-            device=torch.cuda.current_device(),
-            dtype=config.torch_dtype,
-        )
+        if _is_cpu:
+            self.norm = Qwen3NextRMSNormGated(self.head_v_dim, eps=self.layer_norm_epsilon)
+        else:
+            self.norm = RMSNormGated(
+                self.head_v_dim,
+                eps=self.layer_norm_epsilon,
+                group_size=None,
+                norm_before_gate=True,
+                device=torch.cuda.current_device(),
+                dtype=config.torch_dtype,
+            )
 
         self.out_proj = RowParallelLinear(
             self.value_dim,
@@ -414,7 +417,7 @@ class Qwen3GatedDeltaNet(nn.Module):
             hidden_states
         )
 
-        if self.num_v_heads // self.num_k_heads in [1, 2, 4] and is_cuda_graph:
+        if self.num_v_heads // self.num_k_heads in [1, 2, 4] and is_cuda_graph and not _is_cpu:
             mixed_qkv, z, b, a = fused_qkvzba_split_reshape_cat(
                 projected_states_qkvz,
                 projected_states_ba,
@@ -889,7 +892,7 @@ class Qwen3NextForCausalLM(nn.Module):
             prefix=add_prefix("lm_head", prefix),
             use_attn_tp_group=global_server_args_dict["enable_dp_lm_head"],
         )
-        self.lm_head = self.lm_head.float()
+        # self.lm_head = self.lm_head.float()
         self.logits_processor = LogitsProcessor(config)
 
     @torch.no_grad()
