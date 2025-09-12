@@ -86,11 +86,10 @@ def torch_causal_conv1d_update(
     state_len = conv_state.shape[-1]
 
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
-    conv_state.copy_(hidden_states_new[:, :, -state_len:])
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
     out = F.silu(out[:, :, -seq_len:])
     out = out.to(hidden_states.dtype)
-    return out
+    return out, hidden_states_new[:, :, -state_len:]
 
 
 
@@ -383,13 +382,15 @@ class MambaAttnBackend(AttentionBackend):
         conv_states, ssm_states = self.req_to_token_pool.get_mamba_params(layer_id)
         query_start_loc = self.forward_metadata.query_start_loc
         cache_indices = self.forward_metadata.mamba_cache_indices
-        mixed_qkv = torch_causal_conv1d_update(
+        mixed_qkv, new_conv_states = torch_causal_conv1d_update(
             mixed_qkv.unsqueeze(1).transpose(1,2),
             conv_states[cache_indices],
             conv_weights,
             bias,
             activation,
-        ).squeeze(-1)
+        )
+        mixed_qkv = mixed_qkv.squeeze(-1)
+        conv_states[cache_indices] = new_conv_states.to(conv_states.dtype, copy=False)
 
         query, key, value = torch.split(
             mixed_qkv,
@@ -413,16 +414,17 @@ class MambaAttnBackend(AttentionBackend):
             query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
             key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
         batch_size = query_start_loc.shape[0] - 1
-        core_attn_out, _ = torch_recurrent_gated_delta_rule(
+        core_attn_out, last_recurrent_state = torch_recurrent_gated_delta_rule(
             query=query.transpose(0,1).view(batch_size, -1, *query.shape[2:]),
             key=key.transpose(0,1).view(batch_size, -1, *key.shape[2:]),
             value=value.transpose(0, 1).view(batch_size, -1, *value.shape[2:]),
             g=g.unsqueeze(0),
             beta=beta.unsqueeze(0),
             initial_state=ssm_states[cache_indices],
-            output_final_state=False,
+            output_final_state=True,
             use_qk_l2norm_in_kernel=True,
         )
+        ssm_states[cache_indices] = last_recurrent_state.to(ssm_states.dtype, copy=False)
         return core_attn_out
 
     def forward_extend(
