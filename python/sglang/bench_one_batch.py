@@ -363,7 +363,7 @@ def latency_test_run_once(
 
     if profile:
         profiler.stop()
-        profile_filename = f"{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}_prefill.trace.json.gz"
+        profile_filename = f"Trace_prefill_{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}.trace.json.gz"
         parent_dir = os.path.dirname(os.path.abspath(profile_filename))
         os.makedirs(parent_dir, exist_ok=True)
         profiler.export_chrome_trace(profile_filename)
@@ -412,7 +412,7 @@ def latency_test_run_once(
 
         if i == output_len / 2 and profile:
             profiler.stop()
-            profile_filename = f"{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}_decode.trace.json.gz"
+            profile_filename = f"Trace_decode_{profile_filename_prefix}_batch{batch_size}_input{input_len}_output{output_len}.trace.json.gz"
             parent_dir = os.path.dirname(os.path.abspath(profile_filename))
             os.makedirs(parent_dir, exist_ok=True)
             profiler.export_chrome_trace(profile_filename)
