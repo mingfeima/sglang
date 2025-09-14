@@ -491,9 +491,29 @@ def latency_test(
         else:
             with open(bench_args.prompt_filename, "r") as pf:
                 prompt_pool = json.load(pf)
-                prompt_dict = prompt_pool[str(bench_args.input_len[0])]
-                for index in range(bench_args.batch_size[0]):
-                    custom_prompts.append(prompt_dict[str(index)])
+                prompt_dict = None
+                if str(bench_args.input_len[0]) in prompt_pool:
+                    prompt_dict = prompt_pool[str(bench_args.input_len[0])]
+                else:
+                    for key in prompt_pool.keys():
+                        if key in server_args.model_path:
+                            prompt_dict = prompt_pool[key][str(bench_args.input_len[0])]
+                            break
+                if prompt_dict is None:
+                    rank_print(
+                        f"Custom prompt file {bench_args.prompt_filename} does not contain prompts for {server_args.model_path} and"
+                        f"input length {bench_args.input_len[0]}. Using dummy data..."
+                    )
+                else:
+                    for index in range(bench_args.batch_size[0]):
+                        if isinstance(prompt_dict, str):
+                            custom_prompts.append(prompt_dict)
+                        elif str(index) in prompt_dict:
+                            custom_prompts.append(prompt_dict[str(index)])
+                        else:
+                            rank_print(
+                                f"Custom prompt file {bench_args.prompt_filename} does not contain prompt for batch {index}. Using dummy data..."
+                            )
 
     custom_inputs = [tokenizer.encode(p.strip()) for p in custom_prompts]
 
