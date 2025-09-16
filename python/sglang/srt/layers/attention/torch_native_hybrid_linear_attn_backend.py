@@ -15,7 +15,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMo
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.models.qwen3_next import Qwen3HybridLinearDecoderLayer
 from sglang.srt.speculative.eagle_utils import EagleDraftInput, EagleVerifyInput
-
+import sgl_kernel
 
 @dataclass
 class ForwardMetadata:
@@ -222,6 +222,7 @@ class MambaAttnBackend(AttentionBackend):
         self.forward_metadata: ForwardMetadata = None
         self.state_indices_list = []
         self.query_start_loc_list = []
+        self.fused_gdn_gating = torch.ops.sgl_kernel.fused_gdn_gating_cpu
 
     @classmethod
     @lru_cache(maxsize=128)
@@ -503,7 +504,7 @@ class MambaAttnBackend(AttentionBackend):
         value = value.view(1, actual_seq_len, num_value_heads, head_v_dim)
 
         beta = b.sigmoid()
-        g = torch_gdn_gating(A_log, a, dt_bias)
+        g = self.fused_gdn_gating(A_log, a, dt_bias)
         g = g.unsqueeze(0)
         beta = beta.unsqueeze(0)
 
