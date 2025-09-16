@@ -207,6 +207,10 @@ def torch_recurrent_gated_delta_rule(
     return core_attn_out, last_recurrent_state
 
 
+def torch_gdn_gating(A_log, a, dt_bias):
+    return -A_log.float().exp() * F.softplus(a.float() + dt_bias)
+
+
 class MambaAttnBackend(AttentionBackend):
     """Attention backend using Mamba kernel."""
 
@@ -405,7 +409,7 @@ class MambaAttnBackend(AttentionBackend):
         if num_value_heads // num_heads > 1:
             query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
             key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
-        batch_size = query_start_loc.shape[0] - 1
+        batch_size = forward_batch.batch_size
         core_attn_out, last_recurrent_state = torch_recurrent_gated_delta_rule(
             query=query.transpose(0,1).view(batch_size, -1, *query.shape[2:]),
             key=key.transpose(0,1).view(batch_size, -1, *key.shape[2:]),
@@ -499,9 +503,7 @@ class MambaAttnBackend(AttentionBackend):
         value = value.view(1, actual_seq_len, num_value_heads, head_v_dim)
 
         beta = b.sigmoid()
-        # g = fused_gdn_gating(A_log, a, dt_bias)
-        g = -A_log.float().exp() * F.softplus(a.float() + dt_bias)
-
+        g = torch_gdn_gating(A_log, a, dt_bias)
         g = g.unsqueeze(0)
         beta = beta.unsqueeze(0)
 
@@ -521,7 +523,7 @@ class MambaAttnBackend(AttentionBackend):
             if num_value_heads // num_heads > 1:
                 query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
                 key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
-            batch_size = query_start_loc.shape[0] - 1
+            batch_size = forward_batch.batch_size
             core_attn_out, last_recurrent_state = torch_chunk_gated_delta_rule(
                 query=query.view(batch_size, -1, *query.shape[2:]),
                 key=key.view(batch_size, -1, *key.shape[2:]),

@@ -1700,15 +1700,13 @@ class ModelRunner:
             assert (
                 self.is_hybrid_gdn
             ), "hybrid_linear_attn backend can only be used with hybrid GDN models."
-            from sglang.srt.layers.attention.torch_native_backend import (
-                TorchNativeAttnBackend,
-            )
+            from sglang.srt.layers.attention.intel_amx_backend import IntelAMXAttnBackend
             from sglang.srt.layers.attention.torch_native_hybrid_linear_attn_backend import (
                 HybridLinearAttnBackend,
                 MambaAttnBackend,
             )
 
-            full_attn_backend = TorchNativeAttnBackend(self)
+            full_attn_backend = IntelAMXAttnBackend(self)
             linear_attn_backend = MambaAttnBackend(self)
             full_attn_layers = self.model_config.hf_config.full_attention_layer_ids
             return HybridLinearAttnBackend(
