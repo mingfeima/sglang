@@ -36,6 +36,15 @@ class HybridLayerType(enum.Enum):
     linear_attention = "linear_attention"
     mamba2 = "mamba"
 
+def get_num_heads_padding_size(tp_size, weight_block_size):
+    pad_size = (
+        tp_size * 2 if tp_size % 2 == 1 and weight_block_size is not None else tp_size
+    )
+    return pad_size
+
+def pad_vocab_size(vocab_size: int, pad_to: int = 64) -> int:
+    """Pad the vocab size to the given value."""
+    return ((vocab_size + pad_to - 1) // pad_to) * pad_to
 
 class Qwen3NextConfig(PretrainedConfig):
     r"""
@@ -284,9 +293,24 @@ class Qwen3NextConfig(PretrainedConfig):
     @property
     def hybrid_gdn_params(self):
         world_size = get_attention_tp_size()
+        # conv_dim = (
+        #     self.linear_key_head_dim * self.linear_num_key_heads * 2
+        #     + self.linear_value_head_dim * self.linear_num_value_heads
+        # )
+        if (
+            self.linear_num_key_heads % world_size != 0
+            or self.linear_num_value_heads % world_size != 0
+        ):
+            pad_size = get_num_heads_padding_size(world_size, None)
+            self.linear_num_key_heads_pad = pad_vocab_size(self.linear_num_key_heads, pad_size)
+            self.linear_num_value_heads_pad  = pad_vocab_size(self.linear_num_value_heads, pad_size)
+        else:
+            self.linear_num_key_heads_pad = self.linear_num_key_heads
+            self.linear_num_value_heads_pad = self.linear_num_value_heads
+
         conv_dim = (
-            self.linear_key_head_dim * self.linear_num_key_heads * 2
-            + self.linear_value_head_dim * self.linear_num_value_heads
+            self.linear_key_head_dim * self.linear_num_key_heads_pad * 2
+            + self.linear_value_head_dim * self.linear_num_value_heads_pad
         )
         conv_state_shape = (
             divide(conv_dim, world_size),
@@ -294,7 +318,7 @@ class Qwen3NextConfig(PretrainedConfig):
         )
 
         temporal_state_shape = (
-            divide(self.linear_num_value_heads, world_size),
+            divide(self.linear_num_value_heads_pad, world_size),
             self.linear_key_head_dim,
             self.linear_value_head_dim,
         )

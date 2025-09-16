@@ -119,6 +119,17 @@ def adjust_config_with_unaligned_cpu_tp(
         model_config.hf_config.num_attention_heads = num_attention_heads
         model_config.hf_text_config.num_attention_heads = num_attention_heads
 
+    if (
+        model_config.hf_config.linear_num_key_heads % tp_size != 0
+        or model_config.hf_config.linear_num_value_heads % tp_size != 0
+    ):
+        pad_size = get_num_heads_padding_size(tp_size, weight_block_size)
+        model_config.hf_config.linear_num_key_heads_pad = pad_vocab_size(model_config.hf_config.linear_num_key_heads, pad_size)
+        model_config.hf_config.linear_num_value_heads_pad  = pad_vocab_size(model_config.hf_config.linear_num_value_heads, pad_size)
+    else:
+        model_config.hf_config.linear_num_key_heads_pad = model_config.hf_config.linear_num_key_heads
+        model_config.hf_config.linear_num_value_heads_pad = model_config.hf_config.linear_num_value_heads
+
     intermediate_padding_size = tp_size * get_moe_padding_size(weight_block_size)
     model_config = update_intermediate_size(
         model_config, "moe_intermediate_size", intermediate_padding_size
@@ -129,6 +140,10 @@ def adjust_config_with_unaligned_cpu_tp(
     model_config = update_intermediate_size(
         model_config, "intermediate_size_mlp", intermediate_padding_size
     )
+    model_config = update_intermediate_size(
+        model_config, "shared_expert_intermediate_size", intermediate_padding_size
+    )
+
     if (
         hasattr(model_config.hf_config, "vision_config")
         and model_config.hf_config.vision_config.model_type == "siglip_vision_model"

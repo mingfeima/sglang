@@ -6,22 +6,14 @@ import torch
 import torch.nn.functional as F
 
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
-from sglang.srt.layers.attention.fla.chunk import chunk_gated_delta_rule
-from sglang.srt.layers.attention.fla.fused_recurrent import (
-    fused_recurrent_gated_delta_rule_update,
-)
-from sglang.srt.layers.attention.fla.fused_sigmoid_gating_recurrent import (
-    fused_sigmoid_gating_delta_rule_update,
-)
 from sglang.srt.layers.attention.mamba.causal_conv1d import (
-    causal_conv1d_fn,
-    causal_conv1d_update,
+    causal_conv1d_fn
 )
 from sglang.srt.layers.radix_attention import RadixAttention
 from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.model_executor.model_runner import ModelRunner
-from sglang.srt.models.qwen3_next import Qwen3HybridLinearDecoderLayer, fused_gdn_gating
+from sglang.srt.models.qwen3_next import Qwen3HybridLinearDecoderLayer
 from sglang.srt.speculative.eagle_utils import EagleDraftInput, EagleVerifyInput
 
 

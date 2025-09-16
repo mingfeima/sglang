@@ -31,7 +31,7 @@ import torch
 from huggingface_hub import HfFileSystem, hf_hub_download, snapshot_download
 from pydantic import BaseModel, ConfigDict, ValidationInfo, model_validator
 from tqdm.auto import tqdm
-
+from sglang.srt.utils import is_cpu
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.distributed import get_tensor_model_parallel_rank
@@ -685,7 +685,21 @@ def sharded_weight_loader(shard_axis: int) -> LoaderFunction:
 
         shard_size = param.data.shape[shard_axis]
         start_idx = tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)
+        if is_cpu():
+            # actual_shard_size = get_actual_shard_size(
+            #     shard_size, start_idx, loaded_weight.size(shard_axis)
+            # )
+            param.data, loaded_weight = narrow_padded_param_and_loaded_weight(
+                param.data,
+                loaded_weight,
+                0,  # param_data_start
+                start_idx,
+                shard_axis,
+                shard_size,
+            )
+
+        else:
+            loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)
 
         return default_weight_loader(param, loaded_weight)
 
@@ -1006,10 +1020,11 @@ def narrow_padded_param_and_loaded_weight(
         shard_size, weight_start, loaded_weight.size(dim)
     )
 
-    if narrow_weight:
-        if actual_shard_size > 0:
+    if narrow_weight: #TODO - jianan : take care of actual_shard_size > 0 , but not equal to ori shard_size, like weight_start is 30, total ori weight is 32, share size is 6, then need to pad 32 to 36 as well
+        if actual_shard_size > 0 and not actual_shard_size < shard_size:
             loaded_weight = loaded_weight.narrow(dim, weight_start, actual_shard_size)
         else:
+            actual_shard_size = shard_size if actual_shard_size < shard_size else actual_shard_size
             # No real data to load; create a dummy tensor filled with zeros
             loaded_weight = torch.zeros_like(
                 param_data.narrow(dim, param_data_start, actual_shard_size)

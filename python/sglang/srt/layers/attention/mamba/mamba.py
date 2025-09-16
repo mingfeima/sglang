@@ -51,6 +51,11 @@ def mamba_v2_sharded_weight_loader(
             # - the ignore is for a mundane mypy error as it does not
             #   seem to handle slices well.
             # https://github.com/python/mypy/issues/2410
+            if loaded_weight.size(0) < loaded_start_idx + take:
+                pad_size = loaded_start_idx + take - loaded_weight.size(0)
+                pad_t = torch.zeros(pad_size, loaded_weight.size(1), loaded_weight.size(2)).to(loaded_weight.dtype)
+                loaded_weight = torch.cat((loaded_weight, pad_t), dim=0)
+
             param.data[
                 boundary : (boundary + take), ...  # type: ignore[misc]
             ] = loaded_weight[
