@@ -32,12 +32,14 @@ at::Tensor l2norm_cpu(at::Tensor& input, double eps);
 
 // rmsnorm
 at::Tensor rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps);
+at::Tensor gemma_rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps);
 
 // qwen3_next_rmsnorm_gated
 at::Tensor qwen3_next_rmsnorm_gated_cpu(at::Tensor& input, at::Tensor& weight, at::Tensor& gate, double eps);
 
 // fused_add_rmsnorm
 void fused_add_rmsnorm_cpu(at::Tensor& input, at::Tensor& residual, at::Tensor& weight, double eps);
+void gemma_fused_add_rmsnorm_cpu(at::Tensor& input, at::Tensor& residual, at::Tensor& weight, double eps);
 
 // topk
 std::tuple<at::Tensor, at::Tensor>
@@ -253,10 +255,12 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_cpu(
     bool silu_activation,
     const c10::optional<at::Tensor>& cache_seqlens);
 TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
+  // conv
   m.def("causal_conv1d_fn_cpu(Tensor x, Tensor conv_weights, Tensor? conv_bias, Tensor? initial_states, Tensor? final_states_out, bool silu_activation) -> (Tensor, Tensor)");
   m.impl("causal_conv1d_fn_cpu", torch::kCPU, &causal_conv1d_fn_cpu);
   m.def("causal_conv1d_update_cpu(Tensor hidden_states, Tensor conv_states, Tensor conv_weights, Tensor? conv_bias, bool silu_activation, Tensor? cache_seqlens) -> (Tensor, Tensor)");
   m.impl("causal_conv1d_update_cpu", torch::kCPU, &causal_conv1d_update_cpu);
+
   // activation
   m.def("silu_and_mul_cpu(Tensor input) -> Tensor");
   m.impl("silu_and_mul_cpu", torch::kCPU, &silu_and_mul_cpu);
@@ -268,13 +272,17 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   // norm
   m.def("rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
   m.impl("rmsnorm_cpu", torch::kCPU, &rmsnorm_cpu);
+  m.def("gemma_rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
+  m.impl("gemma_rmsnorm_cpu", torch::kCPU, &gemma_rmsnorm_cpu);
   m.def("l2norm_cpu(Tensor input, float eps) -> Tensor");
   m.impl("l2norm_cpu", torch::kCPU, &l2norm_cpu);
   m.def("qwen3_next_rmsnorm_gated_cpu(Tensor input, Tensor weight, Tensor gate, float eps) -> Tensor");
   m.impl("qwen3_next_rmsnorm_gated_cpu", torch::kCPU, &qwen3_next_rmsnorm_gated_cpu);
   m.def("fused_add_rmsnorm_cpu(Tensor(a!) input, Tensor residual, Tensor weight, float eps) -> ()");
   m.impl("fused_add_rmsnorm_cpu", torch::kCPU, &fused_add_rmsnorm_cpu);
-
+  m.def("gemma_fused_add_rmsnorm_cpu(Tensor input, Tensor residual, Tensor weight, float eps) -> ()");
+  m.impl("gemma_fused_add_rmsnorm_cpu", torch::kCPU, &gemma_fused_add_rmsnorm_cpu);
+  
   // topk
   m.def("topk_sigmoid_cpu(Tensor hidden_states, Tensor gating_output, int topk, bool renormalize) -> (Tensor, Tensor)");
   m.impl("topk_sigmoid_cpu", torch::kCPU, &topk_sigmoid_cpu);
