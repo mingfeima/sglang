@@ -30,6 +30,7 @@ void fused_gdn_gating_kernel_impl(float* __restrict__ A_log,
   using fVec = at::vec::Vectorized<float>;
   constexpr int vec_size = bVec::size();
   constexpr int fvec_size = fVec::size();
+  fVec neg_one(-1.0f);
   at::parallel_for(0, batch, 0, [&](int64_t begin, int64_t end) {
     for (int64_t i = begin; i < end; ++i) {
         int64_t j = 0;
@@ -42,8 +43,8 @@ void fused_gdn_gating_kernel_impl(float* __restrict__ A_log,
             std::tie(a0, a1) = at::vec::convert_to_float(a_bvec);
             std::tie(dt_bias_vec0, dt_bias_vec1) = at::vec::convert_to_float(dt_bias_vec);
 
-            fVec g0 = -A_log_vec0.exp() * softplus(a0 + dt_bias_vec0);
-            fVec g1 = -A_log_vec1.exp() * softplus(a1 + dt_bias_vec1);
+            fVec g0 = neg_one * A_log_vec0.exp() * softplus(a0 + dt_bias_vec0);
+            fVec g1 = neg_one * A_log_vec1.exp() * softplus(a1 + dt_bias_vec1);
 
             g0.store(out + i * num_heads + j);
             g1.store(out + i * num_heads + j + fvec_size);
