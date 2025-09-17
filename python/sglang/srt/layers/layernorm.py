@@ -343,6 +343,10 @@ class Qwen3NextRMSNormGated(nn.Module):
         self.variance_epsilon = eps
 
     def forward(self, hidden_states, gate=None):
+        out = torch.ops.sgl_kernel.qwen3_next_rmsnorm_gated_cpu(
+            hidden_states,  self.weight, gate, self.variance_epsilon
+        )
+        return out
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
