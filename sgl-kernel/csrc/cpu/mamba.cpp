@@ -16,7 +16,7 @@ inline at::vec::Vectorized<float> softplus(const at::vec::Vectorized<float>& x) 
     at::vec::Vectorized<float> expx = x.exp();
     at::vec::Vectorized<float> log1pex = (expx + at::vec::Vectorized<float>(1.0f)).log();
 
-    return at::vec::Vectorized<float>::blendv(Vectorized<float>::blendv(log1pex, expx, mask_lo), x, mask_hi);
+    return at::vec::Vectorized<float>::blendv(at::vec::Vectorized<float>::blendv(log1pex, expx, mask_lo), x, mask_hi);
 }
 
 template <typename scalar_t>
@@ -50,7 +50,7 @@ void fused_gdn_gating_kernel_impl(float* __restrict__ A_log,
             g1.store(out + i * num_heads + j + fvec_size);
         }
         for(; j< num_heads; ++j) {
-            out[j] = -std::exp(A_log[j]) * softplus(a[i * num_heads + j] + dt_bias[j]);
+            out[i * num_heads + j] = -std::exp(A_log[j]) * softplus(float(a[i * num_heads + j]) + float(dt_bias[j]));
         }
     }
   });

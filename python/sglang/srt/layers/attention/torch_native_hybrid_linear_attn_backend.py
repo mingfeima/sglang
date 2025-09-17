@@ -420,7 +420,7 @@ class MambaAttnBackend(AttentionBackend):
         key = key.view(1, seq_len, num_heads, head_k_dim)
         value = value.view(1, seq_len, num_value_heads, head_v_dim)
         beta = b.sigmoid()
-        g = -A_log.float().exp() * F.softplus(a.float() + dt_bias)
+        g = self.fused_gdn_gating(A_log, a, dt_bias)
         if num_value_heads // num_heads > 1:
             query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
             key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
@@ -520,8 +520,7 @@ class MambaAttnBackend(AttentionBackend):
         value = value.view(1, actual_seq_len, num_value_heads, head_v_dim)
 
         beta = b.sigmoid()
-        # g = self.fused_gdn_gating(A_log, a, dt_bias)
-        g = torch_gdn_gating(A_log, a, dt_bias)
+        g = self.fused_gdn_gating(A_log, a, dt_bias)
         g = g.unsqueeze(0)
         beta = beta.unsqueeze(0)
 

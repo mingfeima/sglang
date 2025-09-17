@@ -16,14 +16,16 @@ def torch_gdn_gating(A_log, a, dt_bias):
 
 class TestMambaAttention(CustomTestCase):
     def test_fused_gdn_gating(self):
-        A_log = torch.rand(32)
-        a = torch.rand(1024, 32, dtype=torch.bfloat16)
-        dt_bias = torch.rand(32, dtype=torch.bfloat16)
+        dims = [6, 32]
+        for dim in dims:
+            A_log = torch.rand(dim)
+            a = torch.rand(1024, dim, dtype=torch.bfloat16)
+            dt_bias = torch.rand(dim, dtype=torch.bfloat16)
 
-        g = torch_gdn_gating(A_log, a, dt_bias)
-        g_sgl = torch.ops.sgl_kernel.fused_gdn_gating_cpu(A_log, a, dt_bias)
-        atol = rtol = precision[g.dtype]
-        self.assertTrue(torch.allclose(g, g_sgl, atol=atol, rtol=rtol))
+            g = torch_gdn_gating(A_log, a, dt_bias)
+            g_sgl = torch.ops.sgl_kernel.fused_gdn_gating_cpu(A_log, a, dt_bias)
+            atol = rtol = precision[g.dtype]
+            self.assertTrue(torch.allclose(g, g_sgl, atol=atol, rtol=rtol))
 
 
 if __name__ == "__main__":
