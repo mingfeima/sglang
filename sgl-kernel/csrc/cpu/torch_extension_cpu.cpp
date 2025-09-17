@@ -238,8 +238,25 @@ at::Tensor fused_gdn_gating_cpu(at::Tensor& A_log, at::Tensor& a, at::Tensor& dt
 
 // CPU and memory binding
 std::string init_cpu_threads_env(const std::string& cpu_ids);
-
+std::tuple<at::Tensor, at::Tensor> causal_conv1d_fn_cpu(
+    const at::Tensor& x,
+    const at::Tensor& conv_weights,
+    const c10::optional<at::Tensor>& conv_bias,
+    const c10::optional<at::Tensor>& initial_states,
+    const c10::optional<at::Tensor>& final_states_out,
+    bool silu_activation);
+std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_cpu(
+    const at::Tensor& hidden_states,
+    const at::Tensor& conv_states,
+    const at::Tensor& conv_weights,
+    const c10::optional<at::Tensor>& conv_bias,
+    bool silu_activation,
+    const c10::optional<at::Tensor>& cache_seqlens);
 TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
+  m.def("causal_conv1d_fn_cpu(Tensor x, Tensor conv_weights, Tensor? conv_bias, Tensor? initial_states, Tensor? final_states_out, bool silu_activation) -> (Tensor, Tensor)");
+  m.impl("causal_conv1d_fn_cpu", torch::kCPU, &causal_conv1d_fn_cpu);
+  m.def("causal_conv1d_update_cpu(Tensor hidden_states, Tensor conv_states, Tensor conv_weights, Tensor? conv_bias, bool silu_activation, Tensor? cache_seqlens) -> (Tensor, Tensor)");
+  m.impl("causal_conv1d_update_cpu", torch::kCPU, &causal_conv1d_update_cpu);
   // activation
   m.def("silu_and_mul_cpu(Tensor input) -> Tensor");
   m.impl("silu_and_mul_cpu", torch::kCPU, &silu_and_mul_cpu);

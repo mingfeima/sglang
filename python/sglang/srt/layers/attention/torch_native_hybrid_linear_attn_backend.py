@@ -392,12 +392,13 @@ class MambaAttnBackend(AttentionBackend):
         conv_states, ssm_states = self.req_to_token_pool.get_mamba_params(layer_id)
         query_start_loc = self.forward_metadata.query_start_loc
         cache_indices = self.forward_metadata.mamba_cache_indices
-        mixed_qkv, new_conv_states = torch_causal_conv1d_update(
+        mixed_qkv, new_conv_states = torch.ops.sgl_kernel.causal_conv1d_update_cpu(
             mixed_qkv.unsqueeze(1).transpose(1,2),
             conv_states[cache_indices],
             conv_weights,
             bias,
-            activation,
+            activation=="silu",
+            None,
         )
         mixed_qkv = mixed_qkv.squeeze(-1)
         conv_states[cache_indices] = new_conv_states.to(conv_states.dtype, copy=False)
@@ -498,6 +499,8 @@ class MambaAttnBackend(AttentionBackend):
             activation=activation,
             initial_states=conv_states_to_use if has_initial_states[0] else None,
         ).transpose(0, 1)[:seq_len]
+        # mixed_qkv, _ = torch.ops.sgl_kernel.causal_conv1d_fn_cpu(mixed_qkv.unsqueeze(0).transpose(1,2), conv_weights, bias, None, None, True)
+        # mixed_qkv = mixed_qkv.transpose(1,2).squeeze(0)
 
         key_split_dim = key_dim // attn_tp_size
         value_split_dim = value_dim // attn_tp_size
