@@ -1,3 +1,4 @@
+import os
 from dataclasses import astuple, dataclass
 from functools import lru_cache
 from typing import Optional, Union
@@ -17,6 +18,8 @@ from sglang.srt.models.qwen3_next import Qwen3HybridLinearDecoderLayer
 from sglang.srt.speculative.eagle_utils import EagleDraftInput, EagleVerifyInput
 import sgl_kernel
 
+USE_COMPILE = os.environ.get("USE_TORCH_COMPILE_IN_MAMBA_ATTN", "0") == "1"
+
 @dataclass
 class ForwardMetadata:
     query_start_loc: Optional[torch.Tensor]
@@ -24,6 +27,11 @@ class ForwardMetadata:
 
 
 
+def maybe_compile(fn):
+    return torch.compile(fn) if USE_COMPILE else fn
+
+
+@maybe_compile
 def causal_conv1d_ref(
     x,
     weight,
@@ -169,6 +177,7 @@ def torch_chunk_gated_delta_rule(
     return core_attn_out, last_recurrent_state
 
 
+@maybe_compile
 def torch_recurrent_gated_delta_rule(
     query, key, value, g, beta, initial_state, output_final_state, use_qk_l2norm_in_kernel=False
 ):
