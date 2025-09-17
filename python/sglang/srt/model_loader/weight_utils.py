@@ -35,7 +35,7 @@ from sglang.srt.utils import is_cpu
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.distributed import get_tensor_model_parallel_rank
-from sglang.srt.layers.dp_attention import get_attention_tp_rank
+from sglang.srt.layers.dp_attention import get_attention_tp_rank, get_attention_tp_size
 from sglang.srt.layers.quantization import QuantizationConfig, get_quantization_config
 from sglang.srt.layers.quantization.modelopt_quant import ModelOptFp4Config
 from sglang.srt.utils import print_warning_once
@@ -682,21 +682,17 @@ def sharded_weight_loader(shard_axis: int) -> LoaderFunction:
 
     def loader(param: torch.Tensor, loaded_weight: torch.Tensor) -> None:
         tp_rank = get_attention_tp_rank()
+        tp_size = get_attention_tp_size()
 
         shard_size = param.data.shape[shard_axis]
         start_idx = tp_rank * shard_size
         if is_cpu():
-            # actual_shard_size = get_actual_shard_size(
-            #     shard_size, start_idx, loaded_weight.size(shard_axis)
-            # )
-            param.data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                param.data,
-                loaded_weight,
-                0,  # param_data_start
-                start_idx,
-                shard_axis,
-                shard_size,
-            )
+            if (tp_size == 3 or tp_size == 6) and loaded_weight.size(0) == 32 and loaded_weight.dim() == 1:
+                pad_qk = torch.zeros(4).to(loaded_weight.dtype)
+                loaded_weight2  = torch.cat((loaded_weight, pad_qk), dim=0)
+                loaded_weight = loaded_weight2.narrow(shard_axis, start_idx, shard_size)
+            else:
+                loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)
 
         else:
             loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)

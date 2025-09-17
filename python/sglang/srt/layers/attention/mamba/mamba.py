@@ -4,7 +4,6 @@ import torch
 
 LoaderFunction = Callable[[torch.Tensor, torch.Tensor], None]
 
-
 def mamba_v2_sharded_weight_loader(
     shard_spec: List[Tuple[int, int, float]],
     tp_size: int,
@@ -51,16 +50,39 @@ def mamba_v2_sharded_weight_loader(
             # - the ignore is for a mundane mypy error as it does not
             #   seem to handle slices well.
             # https://github.com/python/mypy/issues/2410
-            if loaded_weight.size(0) < loaded_start_idx + take:
-                pad_size = loaded_start_idx + take - loaded_weight.size(0)
-                pad_t = torch.zeros(pad_size, loaded_weight.size(1), loaded_weight.size(2)).to(loaded_weight.dtype)
-                loaded_weight = torch.cat((loaded_weight, pad_t), dim=0)
+            # if loaded_weight.size(0) < loaded_start_idx + take:
+            #     pad_size = loaded_start_idx + take - loaded_weight.size(0)
+            #     pad_t = torch.zeros(pad_size, loaded_weight.size(1), loaded_weight.size(2)).to(loaded_weight.dtype)
+            #     loaded_weight = torch.cat((loaded_weight, pad_t), dim=0)
+            if  tp_size == 3 or tp_size == 6:
+                import copy
+                loaded_weight_ = copy.deepcopy(loaded_weight)
+                q,  k , v = torch.split(
+                    loaded_weight_,
+                    [
+                        2048,
+                        2048,
+                        4096,
+                    ],
+                    dim=0,
+                )
+                pad_qk = torch.zeros(2*128, loaded_weight.size(1), loaded_weight.size(2)).to(loaded_weight.dtype)
+                pad_v = torch.zeros(4*128, loaded_weight.size(1), loaded_weight.size(2)).to(loaded_weight.dtype)
+                q = torch.cat((q, pad_qk), dim=0)
+                k = torch.cat((k, pad_qk), dim=0)
+                v = torch.cat((v, pad_v), dim=0)
+                loaded_weight_1 = torch.cat((q, k), dim=0)
+                loaded_weight_2 = torch.cat((loaded_weight_1, v), dim=0)
+            else:
+                loaded_weight_2 = loaded_weight
 
             param.data[
-                boundary : (boundary + take), ...  # type: ignore[misc]
-            ] = loaded_weight[
-                loaded_start_idx : (loaded_start_idx + take)  # type: ignore[misc]
-            ]  # type: ignore[misc]
+                 boundary : (boundary + take), ...  ] = loaded_weight_2[loaded_start_idx : (loaded_start_idx + take)]
+            # param.data[
+            #     boundary : (boundary + take), ...  # type: ignore[misc]
+            # ] = loaded_weight[
+            #     loaded_start_idx : (loaded_start_idx + take)  # type: ignore[misc]
+            # ]  # type: ignore[misc]
 
             # move indexing boundaries
             boundary += shard_size

@@ -508,7 +508,8 @@ class MambaAttnBackend(AttentionBackend):
         value = value.view(1, actual_seq_len, num_value_heads, head_v_dim)
 
         beta = b.sigmoid()
-        g = self.fused_gdn_gating(A_log, a, dt_bias)
+        # g = self.fused_gdn_gating(A_log, a, dt_bias)
+        g = torch_gdn_gating(A_log, a, dt_bias)
         g = g.unsqueeze(0)
         beta = beta.unsqueeze(0)
 
