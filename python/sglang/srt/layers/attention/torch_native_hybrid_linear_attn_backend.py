@@ -468,7 +468,7 @@ class MambaAttnBackend(AttentionBackend):
 
         query_start_loc = self.forward_metadata.query_start_loc
         cache_indices = self.forward_metadata.mamba_cache_indices
-
+        batch_size = forward_batch.batch_size
         if is_target_verify:
             (
                 conv_states,
@@ -491,16 +491,23 @@ class MambaAttnBackend(AttentionBackend):
             )
             has_initial_states = forward_batch.extend_prefix_lens > 0
             conv_states_to_use = conv_states
-        
-        mixed_qkv = causal_conv1d_ref(
-            mixed_qkv.transpose(0, 1),
-            conv_weights,
-            bias,
-            activation=activation,
-            initial_states=conv_states_to_use if has_initial_states[0] else None,
-        ).transpose(0, 1)[:seq_len]
-        # mixed_qkv, _ = torch.ops.sgl_kernel.causal_conv1d_fn_cpu(mixed_qkv.unsqueeze(0).transpose(1,2), conv_weights, bias, None, None, True)
-        # mixed_qkv = mixed_qkv.transpose(1,2).squeeze(0)
+        start_q = 0
+        for i in range(batch_size):
+            end_q = query_start_loc[i + 1]
+            mixed_qkv_i, final_states = causal_conv1d_ref(
+                mixed_qkv[start_q:end_q].transpose(0, 1),
+                conv_weights,
+                bias,
+                activation=activation,
+                initial_states=conv_states_to_use[cache_indices[i]] if has_initial_states[i] else None,
+                return_final_states=True,
+            )
+            mixed_qkv[start_q:end_q, :] = mixed_qkv_i.transpose(0, 1)
+            if not is_target_verify:
+                conv_states[cache_indices[i]] = final_states.to(
+                    conv_states.dtype, copy=False
+                )
+            start_q = end_q
 
         key_split_dim = key_dim // attn_tp_size
         value_split_dim = value_dim // attn_tp_size
@@ -540,21 +547,24 @@ class MambaAttnBackend(AttentionBackend):
             if num_value_heads // num_heads > 1:
                 query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
                 key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
-            batch_size = forward_batch.batch_size
-            core_attn_out, last_recurrent_state = torch_chunk_gated_delta_rule(
-                query=query.view(batch_size, -1, *query.shape[2:]),
-                key=key.view(batch_size, -1, *key.shape[2:]),
-                value=value.view(batch_size, -1, *value.shape[2:]),
-                g=g.view(batch_size, -1, *g.shape[2:]),
-                beta=beta.view(batch_size, -1, *beta.shape[2:]),
-                initial_state=recurrent_state,
-                output_final_state=True,
-                use_qk_l2norm_in_kernel=True,
-            )
-            core_attn_out = core_attn_out.view(1, -1, num_value_heads, head_v_dim)
-            last_recurrent_state = last_recurrent_state.to(ssm_states.dtype, copy=False)
-            ssm_states[cache_indices] = last_recurrent_state
-
+            core_attn_out = torch.empty_like(value)
+            start_q = 0
+            for i in range(batch_size):
+                end_q = query_start_loc[i + 1]
+                core_attn_outi, last_recurrent_state = torch_chunk_gated_delta_rule(
+                    query=query[:, start_q:end_q, :, :],
+                    key=key[:, start_q:end_q, :, :],
+                    value=value[:, start_q:end_q, :, :],
+                    g=g[:, start_q:end_q, :],
+                    beta=beta[:, start_q:end_q, :],
+                    initial_state=recurrent_state[i],
+                    output_final_state=True,
+                    use_qk_l2norm_in_kernel=True,
+                )
+                core_attn_out[:, start_q:end_q, :, :] = core_attn_outi
+                last_recurrent_state = last_recurrent_state.to(ssm_states.dtype, copy=False)
+                ssm_states[cache_indices[i]] = last_recurrent_state
+                start_q = end_q
         return core_attn_out
 
 
