@@ -17,7 +17,11 @@ from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.models.qwen3_next import Qwen3HybridLinearDecoderLayer
 from sglang.srt.speculative.eagle_utils import EagleDraftInput, EagleVerifyInput
 import sgl_kernel
-
+from sglang.srt.layers.dp_attention import (
+    get_attention_tp_rank,
+    get_attention_tp_size,
+    is_dp_attention_enabled,
+)
 USE_COMPILE = os.environ.get("USE_TORCH_COMPILE_IN_MAMBA_ATTN", "0") == "1"
 
 @dataclass
@@ -56,6 +60,7 @@ def causal_conv1d_ref(
     x = x.to(weight.dtype)
     seqlen = x.shape[-1]
     dim, width = weight.shape
+
     if initial_states is None:
         out = F.conv1d(x, weight.unsqueeze(1), bias, padding=width - 1, groups=dim)
     else:
@@ -86,6 +91,9 @@ def torch_causal_conv1d_update(
     state_len = conv_state.shape[-1]
 
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+# groups: 3072
+# hidden_states_new: torch.Size([1, 3072, 4])
+# weight.unsqueeze(1): torch.Size([3072, 1, 4])
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
     out = F.silu(out[:, :, -seq_len:])
     out = out.to(hidden_states.dtype)
@@ -223,7 +231,6 @@ def torch_recurrent_gated_delta_rule(
 def torch_gdn_gating(A_log, a, dt_bias):
     return -A_log.float().exp() * F.softplus(a.float() + dt_bias)
 
-
 class MambaAttnBackend(AttentionBackend):
     """Attention backend using Mamba kernel."""
 
@@ -236,6 +243,7 @@ class MambaAttnBackend(AttentionBackend):
         self.state_indices_list = []
         self.query_start_loc_list = []
         self.fused_gdn_gating = torch.ops.sgl_kernel.fused_gdn_gating_cpu
+        self.attn_tp_rank = get_attention_tp_rank()
 
     @classmethod
     @lru_cache(maxsize=128)
@@ -400,6 +408,14 @@ class MambaAttnBackend(AttentionBackend):
             activation=="silu",
             None,
         )
+        # mixed_qkv, new_conv_states = torch_causal_conv1d_update(
+        #     mixed_qkv.unsqueeze(1).transpose(1,2),
+        #     conv_states[cache_indices],
+        #     conv_weights,
+        #     bias,
+        #     activation=="silu",
+        # )
+
         mixed_qkv = mixed_qkv.squeeze(-1)
         conv_states[cache_indices] = new_conv_states.to(conv_states.dtype, copy=False)
 
@@ -420,6 +436,7 @@ class MambaAttnBackend(AttentionBackend):
         key = key.view(1, seq_len, num_heads, head_k_dim)
         value = value.view(1, seq_len, num_value_heads, head_v_dim)
         beta = b.sigmoid()
+        # g = torch_gdn_gating(A_log, a, dt_bias)
         g = self.fused_gdn_gating(A_log, a, dt_bias)
         if num_value_heads // num_heads > 1:
             query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
@@ -527,6 +544,7 @@ class MambaAttnBackend(AttentionBackend):
         value = value.view(1, actual_seq_len, num_value_heads, head_v_dim)
 
         beta = b.sigmoid()
+        # g = torch_gdn_gating(A_log, a, dt_bias)
         g = self.fused_gdn_gating(A_log, a, dt_bias)
         g = g.unsqueeze(0)
         beta = beta.unsqueeze(0)
@@ -633,7 +651,8 @@ class HybridLinearAttnBackend(AttentionBackend):
             )
 
     def get_cuda_graph_seq_len_fill_value(self):
-        return self.attn_backend_list[0].get_cuda_graph_seq_len_fill_value()
+        return 1
+        # return self.attn_backend_list[0].get_cuda_graph_seq_len_fill_value()
 
     def forward_decode(
         self,

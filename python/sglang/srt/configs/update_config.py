@@ -120,8 +120,8 @@ def adjust_config_with_unaligned_cpu_tp(
         model_config.hf_text_config.num_attention_heads = num_attention_heads
 
     if (
-        model_config.hf_config.linear_num_key_heads % tp_size != 0
-        or model_config.hf_config.linear_num_value_heads % tp_size != 0
+        (model_config.hf_config.linear_num_key_heads % tp_size != 0
+        or model_config.hf_config.linear_num_value_heads % tp_size != 0)
     ):
         pad_size = get_num_heads_padding_size(tp_size, weight_block_size)
         model_config.hf_config.linear_num_key_heads_pad = pad_vocab_size(model_config.hf_config.linear_num_key_heads, pad_size)

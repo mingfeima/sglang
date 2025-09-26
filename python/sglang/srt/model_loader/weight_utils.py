@@ -676,6 +676,29 @@ def row_parallel_weight_loader(
 
 LoaderFunction = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
+def sharded_weight_loader2(shard_axis: int) -> LoaderFunction:
+    """Create a weight loader that shards the weights along the given axis"""
+
+    def loader(param: torch.Tensor, loaded_weight: torch.Tensor) -> None:
+        tp_rank = get_attention_tp_rank()
+        tp_size = get_attention_tp_size()
+
+        shard_size = param.data.shape[shard_axis]
+        start_idx = tp_rank * shard_size
+        if is_cpu():
+            if (tp_size == 3 or tp_size == 6) and loaded_weight.size(0) == 32 and loaded_weight.dim() == 1:
+                pad_qk = torch.tensor([-float("inf"),-float("inf"),-float("inf"),-float("inf")]).to(loaded_weight.dtype)
+                loaded_weight2  = torch.cat((loaded_weight, pad_qk), dim=0)
+                loaded_weight = loaded_weight2.narrow(shard_axis, start_idx, shard_size)
+            else:
+                loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)
+
+        else:
+            loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)
+
+        return default_weight_loader(param, loaded_weight)
+
+    return loader
 
 def sharded_weight_loader(shard_axis: int) -> LoaderFunction:
     """Create a weight loader that shards the weights along the given axis"""
@@ -688,8 +711,21 @@ def sharded_weight_loader(shard_axis: int) -> LoaderFunction:
         start_idx = tp_rank * shard_size
         if is_cpu():
             if (tp_size == 3 or tp_size == 6) and loaded_weight.size(0) == 32 and loaded_weight.dim() == 1:
-                pad_qk = torch.zeros(4).to(loaded_weight.dtype)
-                loaded_weight2  = torch.cat((loaded_weight, pad_qk), dim=0)
+                import copy
+                loaded_weight_ = copy.deepcopy(loaded_weight)
+                q,  k, v = torch.split(
+                    loaded_weight_,
+                    [
+                        12,
+                        12,
+                        8
+                    ],
+                    dim=0,
+                )
+                pad_v = torch.zeros(4).to(loaded_weight.dtype)
+                qk  = torch.cat((q, k), dim=0)
+                v  = torch.cat((v, pad_v), dim=0)
+                loaded_weight2  = torch.cat((qk, v), dim=0)
                 loaded_weight = loaded_weight2.narrow(shard_axis, start_idx, shard_size)
             else:
                 loaded_weight = loaded_weight.narrow(shard_axis, start_idx, shard_size)
@@ -1016,11 +1052,19 @@ def narrow_padded_param_and_loaded_weight(
         shard_size, weight_start, loaded_weight.size(dim)
     )
 
-    if narrow_weight: #TODO - jianan : take care of actual_shard_size > 0 , but not equal to ori shard_size, like weight_start is 30, total ori weight is 32, share size is 6, then need to pad 32 to 36 as well
-        if actual_shard_size > 0 and not actual_shard_size < shard_size:
+    # if narrow_weight: #TODO - jianan : take care of actual_shard_size > 0 , but not equal to ori shard_size, like weight_start is 30, total ori weight is 32, share size is 6, then need to pad 32 to 36 as well
+    #     if actual_shard_size > 0 and not actual_shard_size < shard_size:
+    #         loaded_weight = loaded_weight.narrow(dim, weight_start, actual_shard_size)
+    #     else:
+    #         actual_shard_size = shard_size if actual_shard_size < shard_size else actual_shard_size
+    #         # No real data to load; create a dummy tensor filled with zeros
+    #         loaded_weight = torch.zeros_like(
+    #             param_data.narrow(dim, param_data_start, actual_shard_size)
+    #         )
+    if narrow_weight:
+        if actual_shard_size > 0:
             loaded_weight = loaded_weight.narrow(dim, weight_start, actual_shard_size)
         else:
-            actual_shard_size = shard_size if actual_shard_size < shard_size else actual_shard_size
             # No real data to load; create a dummy tensor filled with zeros
             loaded_weight = torch.zeros_like(
                 param_data.narrow(dim, param_data_start, actual_shard_size)

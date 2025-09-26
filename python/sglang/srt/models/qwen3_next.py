@@ -44,6 +44,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader.weight_utils import (
     default_weight_loader,
     sharded_weight_loader,
+    sharded_weight_loader2
 )
 from sglang.srt.models.qwen2_moe import Qwen2MoeMLP, Qwen2MoeSparseMoeBlock
 from sglang.srt.utils import add_prefix, is_cuda, is_cpu, make_layers, set_weight_attrs
@@ -320,7 +321,7 @@ class Qwen3GatedDeltaNet(nn.Module):
         self.A_log = nn.Parameter(torch.log(A))
         self.A_log._no_weight_decay = True
 
-        set_weight_attrs(self.A_log, {"weight_loader": sharded_weight_loader(0)})
+        set_weight_attrs(self.A_log, {"weight_loader": sharded_weight_loader2(0)})
         set_weight_attrs(self.dt_bias, {"weight_loader": sharded_weight_loader(0)})
         if _is_cpu:
             self.norm = Qwen3NextRMSNormGated(self.head_v_dim, eps=self.layer_norm_epsilon)
@@ -376,7 +377,6 @@ class Qwen3GatedDeltaNet(nn.Module):
             self.num_v_heads // self.num_k_heads,
             self.num_v_heads // self.num_k_heads,
         ]
-
         # [b, sq, ng, (hn + hn + np/ng * hn + np/ng + np/ng)]
         # --> [b, sq, ng, hn], [b, sq, ng, hn], [b, sq, ng, np/ng * hn], [b, sq, ng, np/ng * hn], [b, sq, ng, np/ng], [b, sq, ng, np/ng]
         (query, key, value, z) = torch.split(mixed_qkvz, split_arg_list_qkvz, dim=2)
@@ -412,11 +412,9 @@ class Qwen3GatedDeltaNet(nn.Module):
     ):
         seq_len, _ = hidden_states.shape
         is_cuda_graph = forward_batch.forward_mode.is_cuda_graph()
-
         projected_states_qkvz, projected_states_ba = self._forward_input_proj(
             hidden_states
         )
-
         if self.num_v_heads // self.num_k_heads in [1, 2, 4] and is_cuda_graph and not _is_cpu:
             mixed_qkv, z, b, a = fused_qkvzba_split_reshape_cat(
                 projected_states_qkvz,
@@ -434,8 +432,9 @@ class Qwen3GatedDeltaNet(nn.Module):
                 lambda x: x.reshape(x.shape[0], -1), (query, key, value)
             )
             mixed_qkv = torch.cat((query, key, value), dim=-1)
-        # mixed_qkv = rearrange(mixed_qkv, "b l d -> b d l")
 
+
+        # mixed_qkv = rearrange(mixed_qkv, "b l d -> b d l")
         # 2. Convolution sequence transformation
         conv_weights = self.conv1d.weight.view(
             self.conv1d.weight.size(0), self.conv1d.weight.size(2)
@@ -618,7 +617,6 @@ class Qwen3HybridAttentionDecoderLayer(nn.Module):
             is_neox_style=True,
             dtype=torch.get_default_dtype(),  # see impl of get_rope
         )
-
         self.qkv_proj = QKVParallelLinear(
             config.hidden_size,
             self.head_dim,

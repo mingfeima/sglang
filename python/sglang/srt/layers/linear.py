@@ -346,7 +346,7 @@ class ColumnParallelLinear(LinearBase):
 
     def weight_loader(self, param: Parameter, loaded_weight: torch.Tensor):
         output_dim = getattr(param, "output_dim", None)
-
+        tp_size = get_tensor_model_parallel_world_size()
         # Special case for GGUF
         is_gguf_weight = getattr(param, "is_gguf_weight", False)
         is_gguf_weight_type = getattr(param, "is_gguf_weight_type", False)
@@ -370,16 +370,33 @@ class ColumnParallelLinear(LinearBase):
                 from sglang.srt.model_loader.weight_utils import (
                     narrow_padded_param_and_loaded_weight,
                 )
+                if (tp_size == 3 or tp_size == 6) and loaded_weight.size(0) == 12288 and loaded_weight.size(1) == 2048:
+                    import copy
 
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                    param_data,
-                    loaded_weight,
-                    0,  # param_data_start
-                    start_idx,
-                    output_dim,
-                    shard_size,
-                    not self.use_presharded_weights,
-                )
+                    loaded_weight_ = copy.deepcopy(loaded_weight)
+                    pad_qkvz = torch.zeros(12*128, loaded_weight.size(1)).to(loaded_weight.dtype)
+                    loaded_weight_3 = torch.cat((loaded_weight_, pad_qkvz), dim=0)
+                    loaded_weight = loaded_weight_3.narrow(
+                        output_dim, start_idx, shard_size
+                    )
+                elif (tp_size == 3 or tp_size == 6) and loaded_weight.size(0) == 64 and loaded_weight.size(1) == 2048:
+                    import copy
+                    loaded_weight_ = copy.deepcopy(loaded_weight)
+                    pad_qk = torch.zeros(8, loaded_weight.size(1)).to(loaded_weight.dtype)
+                    loaded_weight_1 = torch.cat((loaded_weight_, pad_qk), dim=0)
+                    loaded_weight = loaded_weight_1.narrow(
+                        output_dim, start_idx, shard_size
+                    )
+                else:
+                    param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
+                        param_data,
+                        loaded_weight,
+                        0,  # param_data_start
+                        start_idx,
+                        output_dim,
+                        shard_size,
+                        not self.use_presharded_weights,
+                    )
             else:
                 if not self.use_presharded_weights:
                     loaded_weight = loaded_weight.narrow(
@@ -798,6 +815,7 @@ class QKVParallelLinear(ColumnParallelLinear):
             tp_size = get_tensor_model_parallel_world_size()
         self.tp_rank, self.tp_size = tp_rank, tp_size
         self.num_heads = divide(self.total_num_heads, tp_size)
+
         if tp_size >= self.total_num_kv_heads:
             self.num_kv_heads = 1
             self.num_kv_head_replicas = divide(tp_size, self.total_num_kv_heads)
@@ -1257,18 +1275,25 @@ class RowParallelLinear(LinearBase):
             start_idx = self.tp_rank * shard_size
 
             if _is_cpu:
-                from sglang.srt.model_loader.weight_utils import (
-                    narrow_padded_param_and_loaded_weight,
-                )
+                if (self.tp_size == 3 or self.tp_size == 6) and self.input_size_per_partition == 1536 and loaded_weight.size(1) == 4096 and loaded_weight.size(0)==2048 and loaded_weight.dim() == 2:
+                    import copy
+                    loaded_weight_ = copy.deepcopy(loaded_weight)
+                    pad_v = torch.zeros(loaded_weight_.size(0), 4*128).to(loaded_weight.dtype)
+                    loaded_weight2  = torch.cat((loaded_weight_, pad_v), dim=1)
+                    loaded_weight = loaded_weight2.narrow(input_dim, start_idx, shard_size)
+                else:
+                    from sglang.srt.model_loader.weight_utils import (
+                        narrow_padded_param_and_loaded_weight,
+                    )
 
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                    param_data,
-                    loaded_weight,
-                    0,  # param_data_start
-                    start_idx,
-                    input_dim,
-                    shard_size,
-                )
+                    param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
+                        param_data,
+                        loaded_weight,
+                        0,  # param_data_start
+                        start_idx,
+                        input_dim,
+                        shard_size,
+                    )
             else:
                 loaded_weight = loaded_weight.narrow(input_dim, start_idx, shard_size)
 

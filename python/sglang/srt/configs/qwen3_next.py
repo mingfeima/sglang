@@ -298,12 +298,12 @@ class Qwen3NextConfig(PretrainedConfig):
         #     + self.linear_value_head_dim * self.linear_num_value_heads
         # )
         if (
-            self.linear_num_key_heads % world_size != 0
-            or self.linear_num_value_heads % world_size != 0
+            (self.linear_num_key_heads % world_size != 0
+            or self.linear_num_value_heads % world_size != 0) 
         ):
             pad_size = get_num_heads_padding_size(world_size, None)
             self.linear_num_key_heads_pad = pad_vocab_size(self.linear_num_key_heads, pad_size)
-            self.linear_num_value_heads_pad  = self.linear_num_key_heads_pad * self.linear_num_value_heads // self.linear_num_key_heads #pad_vocab_size(self.linear_num_value_heads, pad_size)
+            self.linear_num_value_heads_pad  = self.linear_num_key_heads_pad * self.linear_num_value_heads // self.linear_num_key_heads
         else:
             self.linear_num_key_heads_pad = self.linear_num_key_heads
             self.linear_num_value_heads_pad = self.linear_num_value_heads
