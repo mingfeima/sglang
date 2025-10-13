@@ -435,24 +435,18 @@ class MambaAttnBackend(AttentionBackend):
         query = query.view(1, seq_len, num_heads, head_k_dim)
         key = key.view(1, seq_len, num_heads, head_k_dim)
         value = value.view(1, seq_len, num_value_heads, head_v_dim)
-        beta = b.sigmoid()
-        # g = torch_gdn_gating(A_log, a, dt_bias)
-        g = self.fused_gdn_gating(A_log, a, dt_bias)
-        if num_value_heads // num_heads > 1:
-            query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
-            key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
-        batch_size = forward_batch.batch_size
-        core_attn_out, last_recurrent_state = torch_recurrent_gated_delta_rule(
-            query=query.transpose(0,1).view(batch_size, -1, *query.shape[2:]),
-            key=key.transpose(0,1).view(batch_size, -1, *key.shape[2:]),
-            value=value.transpose(0, 1).view(batch_size, -1, *value.shape[2:]),
-            g=g.unsqueeze(0),
-            beta=beta.unsqueeze(0),
-            initial_state=ssm_states[cache_indices],
-            output_final_state=True,
-            use_qk_l2norm_in_kernel=True,
+        core_attn_out = torch.ops.sgl_kernel.fused_sigmoid_gating_delta_rule_update_cpu(
+            query.contiguous(),
+            key.contiguous(),
+            value,
+            A_log,
+            a,
+            dt_bias,
+            b,
+            cache_indices,
+            ssm_states,
+            True,
         )
-        ssm_states[cache_indices] = last_recurrent_state.to(ssm_states.dtype, copy=False)
         return core_attn_out
 
     def forward_extend(
@@ -550,15 +544,15 @@ class MambaAttnBackend(AttentionBackend):
         beta = beta.unsqueeze(0)
 
         if is_target_verify:
-            core_attn_out, last_recurrent_state = torch_recurrent_gated_delta_rule(
-                query=query,
-                key=key,
-                value=value,
-                g=g,
-                beta=beta,
-                initial_state=ssm_states[cache_indices],
-                output_final_state=False,
-                use_qk_l2norm_in_kernel=True,
+            core_attn_out = torch.ops.sgl_kernel.fused_recurrent_gated_delta_rule_cpu(
+                query,
+                key,
+                value,
+                g,
+                beta,
+                cache_indices,
+                ssm_states,
+                True,
             )
         else:
             recurrent_state = ssm_states[cache_indices]
