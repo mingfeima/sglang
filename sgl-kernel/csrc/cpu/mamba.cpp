@@ -1608,7 +1608,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> fused_qkvzba_split_re
 // g: [B, T, HV] FP32
 // beta: [B, T, HV]
 // cu_seqlens: [N + 1] INT32
-// initial_state: [N, HV, EK, EV]
+// initial_state: [N, HV, EK, EV] FP32
 // use_qk_l2norm_in_kernel: bool
 std::tuple<at::Tensor, at::Tensor> chunk_gated_delta_rule_cpu(
         at::Tensor& query,
@@ -1620,11 +1620,16 @@ std::tuple<at::Tensor, at::Tensor> chunk_gated_delta_rule_cpu(
         at::Tensor& initial_state,
         bool use_qk_l2norm_in_kernel) {
     RECORD_FUNCTION("sgl-kernel::chunk_gated_delta_rule_cpu", std::vector<c10::IValue>({query, key, value, g, beta, initial_state}));
+    TORCH_CHECK(query.dtype() == at::kBFloat16 && query.dtype() == key.dtype()
+        && query.dtype() == value.dtype() && query.dtype() == beta.dtype());
+    TORCH_CHECK(g.dtype() == at::kFloat && g.dtype() == initial_state.dtype());
+    TORCH_CHECK(cu_seqlens.dtype() == at::kInt);
     CHECK_DIM(4, query);
     CHECK_DIM(4, key);
     CHECK_DIM(4, value);
     CHECK_DIM(3, g);
     CHECK_DIM(3, beta);
+    CHECK_DIM(1, cu_seqlens);
     CHECK_DIM(4, initial_state);
     CHECK_LAST_DIM_CONTIGUOUS_INPUT(query);
     CHECK_LAST_DIM_CONTIGUOUS_INPUT(key);
