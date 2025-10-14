@@ -103,6 +103,17 @@ void extend_attention_cpu(
     double sm_scale,
     double logit_cap);
 
+ std::tuple<at::Tensor, at::Tensor> chunk_gated_delta_rule_cpu(
+    at::Tensor& query,
+    at::Tensor& key,
+    at::Tensor& value,
+    at::Tensor& g,
+    at::Tensor& beta,
+    at::Tensor& cu_seqlens,
+    at::Tensor& initial_state,
+    bool output_final_state,
+    bool use_qk_l2norm_in_kernel);
+
 // weight prepack
 at::Tensor convert_weight_packed(at::Tensor& weight);
 
@@ -351,6 +362,13 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "Tensor v_buffer, Tensor req_to_token, Tensor req_pool_indices, Tensor seq_lens, Tensor extend_seq_lens, Tensor "
       "extend_start_loc, int max_len_extend, float sm_scale, float logit_cap) -> ()");
   m.impl("extend_attention_cpu", torch::kCPU, &extend_attention_cpu);
+
+  // linear attn
+  m.def(
+      "chunk_gated_delta_rule_cpu(Tensor query, Tensor key, Tensor value, Tensor g, Tensor beta, "
+      "Tensor cu_seqlens, Tensor initial_state, bool output_final_state, bool output_final_state)"
+      " -> (Tensor, Tensor)");
+  m.impl("chunk_gated_delta_rule_cpu", torch::kCPU, &chunk_gated_delta_rule_cpu);
 
   // weight prepack
   m.def("convert_weight_packed(Tensor weight) -> Tensor");
