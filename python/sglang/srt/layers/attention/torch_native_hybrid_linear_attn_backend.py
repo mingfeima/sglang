@@ -546,27 +546,17 @@ class MambaAttnBackend(AttentionBackend):
             )
         else:
             recurrent_state = ssm_states[cache_indices]
-            if num_value_heads // num_heads > 1:
-                query = query.repeat_interleave(num_value_heads // num_heads, dim=2)
-                key = key.repeat_interleave(num_value_heads // num_heads, dim=2)
-            core_attn_out = torch.empty_like(value)
-            start_q = 0
-            for i in range(batch_size):
-                end_q = query_start_loc[i + 1]
-                core_attn_outi, last_recurrent_state = torch_chunk_gated_delta_rule(
-                    query=query[:, start_q:end_q, :, :],
-                    key=key[:, start_q:end_q, :, :],
-                    value=value[:, start_q:end_q, :, :],
-                    g=g[:, start_q:end_q, :],
-                    beta=beta[:, start_q:end_q, :],
-                    initial_state=recurrent_state[i],
-                    output_final_state=True,
-                    use_qk_l2norm_in_kernel=True,
-                )
-                core_attn_out[:, start_q:end_q, :, :] = core_attn_outi
-                last_recurrent_state = last_recurrent_state.to(ssm_states.dtype, copy=False)
-                ssm_states[cache_indices[i]] = last_recurrent_state
-                start_q = end_q
+            core_attn_out, last_recurrent_state = torch.ops.sgl_kernel.chunk_gated_delta_rule_cpu(
+                query=query,
+                key=key,
+                value=value,
+                g=g,
+                beta=beta,
+                cu_seqlens=query_start_loc,
+                initial_state=recurrent_state,
+                use_qk_l2norm_in_kernel=True,
+            )
+            ssm_states[cache_indices] = last_recurrent_state
         return core_attn_out
 
 
