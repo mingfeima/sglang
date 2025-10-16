@@ -425,13 +425,14 @@ class Qwen3GatedDeltaNet(nn.Module):
                 self.head_v_dim,
             )
         else:
-            query, key, value, z, b, a = self.fix_query_key_value_ordering(
-                projected_states_qkvz, projected_states_ba
+            mixed_qkv, z, b, a = torch.ops.sgl_kernel.fused_qkvzba_split_reshape_cat_cpu(
+                projected_states_qkvz,
+                projected_states_ba,
+                self.num_k_heads // self.attn_tp_size,
+                self.num_v_heads // self.attn_tp_size,
+                self.head_k_dim,
+                self.head_v_dim,
             )
-            query, key, value = map(
-                lambda x: x.reshape(x.shape[0], -1), (query, key, value)
-            )
-            mixed_qkv = torch.cat((query, key, value), dim=-1)
 
 
         # mixed_qkv = rearrange(mixed_qkv, "b l d -> b d l")
