@@ -398,26 +398,16 @@ class MambaAttnBackend(AttentionBackend):
         layer_id = kwargs["layer_id"]
 
         conv_states, ssm_states = self.req_to_token_pool.get_mamba_params(layer_id)
-        query_start_loc = self.forward_metadata.query_start_loc
         cache_indices = self.forward_metadata.mamba_cache_indices
-        mixed_qkv, new_conv_states = torch.ops.sgl_kernel.causal_conv1d_update_cpu(
-            mixed_qkv.unsqueeze(1).transpose(1,2),
-            conv_states[cache_indices],
+        mixed_qkv = torch.ops.sgl_kernel.causal_conv1d_update_cpu(
+            mixed_qkv,
+            conv_states,
+            cache_indices,
             conv_weights,
             bias,
             activation=="silu",
             None,
         )
-        # mixed_qkv, new_conv_states = torch_causal_conv1d_update(
-        #     mixed_qkv.unsqueeze(1).transpose(1,2),
-        #     conv_states[cache_indices],
-        #     conv_weights,
-        #     bias,
-        #     activation=="silu",
-        # )
-
-        mixed_qkv = mixed_qkv.squeeze(-1)
-        conv_states[cache_indices] = new_conv_states.to(conv_states.dtype, copy=False)
 
         query, key, value = torch.split(
             mixed_qkv,

@@ -72,14 +72,15 @@ void fused_gdn_gating_kernel_impl(float* __restrict__ A_log,
   });
 }
 template <typename T>
-std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_kernel_inner(
+at::Tensor causal_conv1d_update_kernel_inner(
     const at::Tensor& hidden_states,
-    const at::Tensor& conv_states,
+    at::Tensor& conv_states,
+    const at::Tensor& cache_indices,
     const at::Tensor& conv_weights,
     const c10::optional<at::Tensor>& conv_bias,
     bool silu_activation,
     const c10::optional<at::Tensor>& cache_seqlens) {
-  auto bs = conv_states.size(0);
+  auto bs = cache_indices.size(0);
   auto channels = conv_states.size(1);
   auto kernel_size = conv_weights.size(1);
   auto state_len = conv_states.size(2);
@@ -89,6 +90,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_kernel_inner(
   auto conv_states_ptr = conv_states.data_ptr<T>();
   auto conv_weights_ptr = conv_weights.data_ptr<T>();
   auto hidden_states_ptr = hidden_states.data_ptr<T>();
+  auto cache_indices_ptr = cache_indices.data_ptr<int>();
   auto hidden_states_strideB = hidden_states.stride(0);
   auto hidden_states_strideC = hidden_states.stride(1);
   auto hidden_states_strideS =
@@ -117,7 +119,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_kernel_inner(
         auto cache_seqlen = cache_seqlens_ptr[bi];
         auto copy_idx = cache_seqlen % state_len;
         auto conv_states_start =
-            bi * conv_states_strideB + ci * conv_states_strideC;
+            cache_indices_ptr[bi] * conv_states_strideB + ci * conv_states_strideC;
         auto conv_weights_start = ci * conv_weights_strideC;
         auto hidden_states_start =
             bi * hidden_states_strideB + ci * hidden_states_strideC;
@@ -172,7 +174,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_kernel_inner(
     for (auto bi = 0; bi < bs; bi++) {
       for (auto ci = 0; ci < channels; ci++) {
         auto conv_states_start =
-            bi * conv_states_strideB + ci * conv_states_strideC;
+            cache_indices_ptr[bi] * conv_states_strideB + ci * conv_states_strideC;
         auto conv_weights_start = ci * conv_weights_strideC;
         auto hidden_states_start =
             bi * hidden_states_strideB + ci * hidden_states_strideC;
@@ -220,7 +222,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_kernel_inner(
       }
     }
   }
-  return std::make_tuple(std::move(res), std::move(conv_states));
+  return std::move(res);
 }
 template <typename T>
 std::tuple<at::Tensor, at::Tensor> causal_conv1d_fn_kernel_inner(
@@ -597,9 +599,10 @@ at::Tensor fused_gdn_gating_cpu(const at::Tensor& A_log, const at::Tensor& a, co
 }
 
 
-std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_cpu(
+at::Tensor causal_conv1d_update_cpu(
     const at::Tensor& hidden_states,
-    const at::Tensor& conv_states,
+    at::Tensor& conv_states,
+    const at::Tensor& cache_indices,
     const at::Tensor& conv_weights,
     const c10::optional<at::Tensor>& conv_bias,
     bool silu_activation,
@@ -609,6 +612,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_cpu(
     return causal_conv1d_update_kernel_inner<float>(
         hidden_states,
         conv_states,
+        cache_indices,
         conv_weights,
         conv_bias,
         silu_activation,
@@ -617,6 +621,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_cpu(
     return causal_conv1d_update_kernel_inner<at::BFloat16>(
         hidden_states,
         conv_states,
+        cache_indices,
         conv_weights,
         conv_bias,
         silu_activation,
@@ -625,6 +630,7 @@ std::tuple<at::Tensor, at::Tensor> causal_conv1d_update_cpu(
     return causal_conv1d_update_kernel_inner<at::Half>(
         hidden_states,
         conv_states,
+        cache_indices,
         conv_weights,
         conv_bias,
         silu_activation,
