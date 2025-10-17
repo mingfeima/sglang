@@ -546,6 +546,9 @@ class MambaAttnBackend(AttentionBackend):
             )
         else:
             recurrent_state = ssm_states[cache_indices]
+            # Take l2norm out of the kernel due to accuracy issues
+            query = l2norm(query, dim=-1, eps=1e-6)
+            key = l2norm(key, dim=-1, eps=1e-6)
             core_attn_out, last_recurrent_state = torch.ops.sgl_kernel.chunk_gated_delta_rule_cpu(
                 query=query,
                 key=key,
@@ -554,7 +557,7 @@ class MambaAttnBackend(AttentionBackend):
                 beta=beta,
                 cu_seqlens=query_start_loc,
                 initial_state=recurrent_state,
-                use_qk_l2norm_in_kernel=True,
+                # use_qk_l2norm_in_kernel=True
             )
             ssm_states[cache_indices] = last_recurrent_state
         return core_attn_out

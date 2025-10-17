@@ -601,8 +601,6 @@ void chunk_gated_delta_rule_kernel_impl(
     int64_t qk_head_size = query.size(3);
     int64_t v_head_size = value.size(3);
     int64_t head_group = v_num_head / qk_num_head;
-    int64_t global_pad_size = (chunk_size - global_seq_len % chunk_size) % chunk_size;
-    int64_t global_total_seq_length = global_seq_len + global_pad_size;
     float scale = 1.0 / std::sqrt(qk_head_size);
 
     // Strides
@@ -629,6 +627,24 @@ void chunk_gated_delta_rule_kernel_impl(
     const int32_t* cu_seqlens_ptr = cu_seqlens.const_data_ptr<int32_t>();
     scalar_t* out = output.data_ptr<scalar_t>();
     float* final_state_data = final_state.data_ptr<float>();
+
+    // Deduce the padded seq lengths
+    std::vector<int64_t> pad_start_q(batch_size, 0);
+    int64_t s = 0;
+    int64_t e = 0;
+    int64_t s_pad = 0;
+    int64_t e_pad = 0;
+    for (int64_t n = 0; n < batch_size; n++) {
+      e = cu_seqlens_ptr[n + 1];
+      int64_t seq_len = e - s;
+      int64_t pad_size = (chunk_size - seq_len % chunk_size) % chunk_size;
+      int64_t total_seq_length = seq_len + pad_size;
+      e_pad = s_pad + total_seq_length;
+      pad_start_q[n] = s_pad;
+      s = e;
+      s_pad = e_pad;
+    }
+    int64_t global_total_seq_length = e_pad;
 
     // Allocate buffer
     at::Tensor q_pad_data = at::zeros({qk_num_head, global_total_seq_length, qk_head_size}, query.options().dtype(at::kFloat));
@@ -667,15 +683,17 @@ void chunk_gated_delta_rule_kernel_impl(
         auto v_orig_ptr = v_orig + start_q * vStrideT;
         auto g_orig_ptr = g_orig + start_q;
         auto b_orig_ptr = b_orig + start_q;
-        auto core_attn_out_ptr = core_attn_out + start_q * v_head_size;
         auto out_ptr = out + start_q * oStrideT;
         auto final_state_ptr = final_state_data + n * final_state_StrideN;
-        auto q_pad_ptr = q_pad + start_q * qk_head_size;
-        auto k_pad_ptr = k_pad + start_q * qk_head_size;
-        auto v_pad_ptr = v_pad + start_q * v_head_size;
-        auto g_pad_ptr = g_pad + start_q;
-        auto k_beta_ptr = k_beta + start_q * qk_head_size;
-        auto v_beta_ptr = v_beta + start_q * v_head_size;
+
+        auto start_q_pad = pad_start_q[n];
+        auto core_attn_out_ptr = core_attn_out + start_q_pad * v_head_size;
+        auto q_pad_ptr = q_pad + start_q_pad * qk_head_size;
+        auto k_pad_ptr = k_pad + start_q_pad * qk_head_size;
+        auto v_pad_ptr = v_pad + start_q_pad * v_head_size;
+        auto g_pad_ptr = g_pad + start_q_pad;
+        auto k_beta_ptr = k_beta + start_q_pad * qk_head_size;
+        auto v_beta_ptr = v_beta + start_q_pad * v_head_size;
         int64_t seq_len = end_q - start_q;
         int64_t pad_size = (chunk_size - seq_len % chunk_size) % chunk_size;
         int64_t total_seq_length = seq_len + pad_size;
@@ -686,10 +704,10 @@ void chunk_gated_delta_rule_kernel_impl(
         // k_beta = key * beta.unsqueeze(-1)
         // v_beta = value * beta.unsqueeze(-1)
         // TODO: change parallel from HV to HK, and remove `if` branches
-        at::parallel_for(0, v_num_head * total_seq_length, 1, [&](int64_t begin, int64_t end) {
+        at::parallel_for(0, v_num_head * seq_len, 1, [&](int64_t begin, int64_t end) {
             int ompIdx = at::get_thread_num();
             int64_t h = 0, l = 0;
-            at::native::data_index_init(begin, h, v_num_head, l, total_seq_length);
+            at::native::data_index_init(begin, h, v_num_head, l, seq_len);
             for ([[maybe_unused]] auto z : c10::irange(begin, end)) {
                 int64_t h_qk = h / head_group;
                 int64_t h_res = h % head_group;
@@ -757,7 +775,7 @@ void chunk_gated_delta_rule_kernel_impl(
                     tmp5.store(curr_v_beta + i, v_head_size - i);
                 }
                 // Move to the next query
-                at::native::data_index_step(h, v_num_head, l, total_seq_length);
+                at::native::data_index_step(h, v_num_head, l, seq_len);
             }
         });
 
@@ -1670,10 +1688,12 @@ std::tuple<at::Tensor, at::Tensor> chunk_gated_delta_rule_cpu(
     }
     at::Tensor query_ = query;
     at::Tensor key_ = key;
-    if (use_qk_l2norm_in_kernel) {
-        query_ = qwen3_next_l2norm_cpu(query_, 1e-6);
-        key_ = qwen3_next_l2norm_cpu(key_, 1e-6);
-    }
+    // Take l2norm out of the kernel due to accuracy issues
+    // if (use_qk_l2norm_in_kernel) {
+    //     query_ = qwen3_next_l2norm_cpu(query_, 1e-6);
+    //     key_ = qwen3_next_l2norm_cpu(key_, 1e-6);
+    // }
+
     AT_DISPATCH_REDUCED_FLOATING_TYPES(query.scalar_type(), "chunk_gated_delta_rule_kernel", [&] {
         chunk_gated_delta_rule_kernel_impl<scalar_t>(
             output,
