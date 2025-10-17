@@ -557,7 +557,7 @@ class MambaAttnBackend(AttentionBackend):
                 beta=beta,
                 cu_seqlens=query_start_loc,
                 initial_state=recurrent_state,
-                # use_qk_l2norm_in_kernel=True
+                use_qk_l2norm_in_kernel=False,
             )
             ssm_states[cache_indices] = last_recurrent_state
         return core_attn_out
