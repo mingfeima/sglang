@@ -488,7 +488,7 @@ at::Tensor l2norm_cpu(at::Tensor& input, double eps) {
 at::Tensor qwen3_next_l2norm_cpu(at::Tensor& input, double eps) {
   RECORD_FUNCTION("sgl-kernel::qwen3_next_l2norm_cpu", std::vector<c10::IValue>({input}));
 
-  CHECK_LAST_DIM_CONTIGUOUS_INPUT(input);
+  CHECK_INPUT(input);
   TORCH_CHECK(input.dim() == 2 || input.dim() == 4, "qwen3_next_l2norm_cpu: input must be 2D or 4D, got ", input.dim(), "D");
   int64_t numel = input.numel();
   int64_t hidden_size = input.size(-1);

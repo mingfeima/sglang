@@ -1638,6 +1638,7 @@ std::tuple<at::Tensor, at::Tensor> chunk_gated_delta_rule_cpu(
         at::Tensor& initial_state,
         bool use_qk_l2norm_in_kernel) {
     RECORD_FUNCTION("sgl-kernel::chunk_gated_delta_rule_cpu", std::vector<c10::IValue>({query, key, value, g, beta, initial_state}));
+
     TORCH_CHECK(query.dtype() == at::kBFloat16 && query.dtype() == key.dtype()
         && query.dtype() == value.dtype() && query.dtype() == beta.dtype());
     TORCH_CHECK(g.dtype() == at::kFloat && g.dtype() == initial_state.dtype());
@@ -1688,11 +1689,10 @@ std::tuple<at::Tensor, at::Tensor> chunk_gated_delta_rule_cpu(
     }
     at::Tensor query_ = query;
     at::Tensor key_ = key;
-    // Take l2norm out of the kernel due to accuracy issues
-    // if (use_qk_l2norm_in_kernel) {
-    //     query_ = qwen3_next_l2norm_cpu(query_, 1e-6);
-    //     key_ = qwen3_next_l2norm_cpu(key_, 1e-6);
-    // }
+    if (use_qk_l2norm_in_kernel) {
+        query_ = qwen3_next_l2norm_cpu(query_, 1e-6);
+        key_ = qwen3_next_l2norm_cpu(key_, 1e-6);
+    }
 
     AT_DISPATCH_REDUCED_FLOATING_TYPES(query.scalar_type(), "chunk_gated_delta_rule_kernel", [&] {
         chunk_gated_delta_rule_kernel_impl<scalar_t>(
