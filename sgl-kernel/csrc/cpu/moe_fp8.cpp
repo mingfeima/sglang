@@ -5,6 +5,18 @@
 namespace {
 
 template <typename scalar_t>
+inline void fill_stub(scalar_t* __restrict__ out, scalar_t val, int64_t size) {
+  using Vec = at::vec::Vectorized<scalar_t>;
+  const Vec data_vec(val);
+  // at::vec::map<scalar_t>([data_vec](Vec out) { return out = data_vec; }, out, out, size);
+
+#pragma GCC unroll 4
+  for (int64_t d = 0; d < size; d += Vec::size()) {
+    data_vec.store(out + d);
+  }
+}
+
+template <typename scalar_t>
 inline void copy_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t size) {
   using Vec = at::vec::Vectorized<scalar_t>;
 // no remainder
@@ -178,6 +190,13 @@ void fused_experts_fp8_kernel_impl(
   const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(avg_M);
 
   int64_t B_tmp_size_per_thread = MAX_CACHE_BLOCK_SIZE * BLOCK_N * std::max(K, N);
+
+  // init ic2 to zero, since we have padded tokens and ic2 won't be fully filled
+  at::parallel_for(0, M * topk, 0, [&](int64_t begin, int64_t end) {
+    for (int64_t m = begin; m < end; ++m) {
+      fill_stub(ic2 + m * K, static_cast<scalar_t>(0), K);
+    }
+  });
 
   // here we only parallel on half of 2N to fuse silu_and_mul with gemm
   parallel_2d(MB, NB, [&](int64_t mb0, int64_t mb1, int64_t nb0, int64_t nb1) {
