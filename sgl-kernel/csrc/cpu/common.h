@@ -237,7 +237,7 @@ inline void parallel_2d(int m, int n, const func_t& f) {
 
 // limit max cache blocks
 // when we need to do pre-unpack for weights, e.g. fp8
-#define MAX_CACHE_BLOCK_SIZE 4
+#define MAX_CACHE_BLOCK_SIZE 1
 
 template <typename T>
 inline int get_cache_blocks(int chunk_size) {

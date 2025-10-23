@@ -131,14 +131,6 @@ inline void add_mul_stub(
   }
 }
 
-template <typename T>
-void print_array(const T* ptr, int64_t size) {
-  for (int64_t i = 0; i < size; ++i) {
-    std::cout << ptr[i] << " ";
-  }
-  std::cout << std::endl;
-}
-
 template <int BLOCK_M>
 int moe_align_block_size(
     int32_t* __restrict__ sorted_ids,
@@ -175,9 +167,6 @@ int moe_align_block_size(
   // the last row holds sums of each experts
   int32_t* total_cnts_t_1 = T_INDEX(num_threads);
 
-  // std::cout << "### total_cnts_t_1:" << std::endl;
-  // print_array(total_cnts_t_1, num_experts);
-
   cumsums[0] = 0;
   for (int e = 0; e < num_experts; ++e) {
     // accumulate `num_tokens_post_pad`, also as the expert offset
@@ -188,9 +177,6 @@ int moe_align_block_size(
     }
   }
   int num_tokens_post_pad = cumsums[num_experts];
-  // std::cout << "### num_tokens_post_pad = " << num_tokens_post_pad << std::endl;
-  // std::cout << "### cumsums:" << std::endl;
-  // print_array(cumsums, num_experts + 1);
 
   at::parallel_for(0, numel, 0, [&](int begin, int end) {
     int tid = at::get_thread_num();
@@ -237,14 +223,7 @@ int moe_align_block_size(
   for (int mb = 0; mb < num_token_blocks; ++mb) {
     offsets[mb + 1] += offsets[mb];
   }
-  // std::cout << "### offsets: " << std::endl;
-  // print_array(offsets, num_token_blocks + 1);
 
-  // std::cout << "### sorted_ids: " << std::endl;
-  // print_array(sorted_ids, num_tokens_post_pad);
-
-  // std::cout << "### expert_ids: " << std::endl;
-  // print_array(expert_ids, num_token_blocks);
   //  debug: the last value of offsets should be `numel`
   TORCH_CHECK(offsets[num_token_blocks] <= numel);
 
