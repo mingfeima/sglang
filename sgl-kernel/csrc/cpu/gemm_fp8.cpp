@@ -280,6 +280,7 @@ struct brgemm<at::BFloat16, at::Float8_e4m3fn, has_bias> {
         int kb_size = std::min(BLOCK_K, K - k);
 
         int idx = k >> 7;  // k / BLOCK_K where BLOCK_K = 128
+        _mm_prefetch(scale + idx + 1, _MM_HINT_T0);
         unpack_B(Btmp + k * ldb_tmp, B + k * ldb, N, kb_size, ldb, ldb_tmp, scale[idx]);
       }
     }

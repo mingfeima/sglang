@@ -143,7 +143,7 @@ int moe_align_block_size(
     int numel,
     int num_threads) {
 #define T_INDEX(tt) total_cnts + (tt) * num_experts
-#define VALID_EXPERT_ID(id) (id >= 0) && (id < num_experts)
+#define VALID_EXPERT_ID(id) (id >= 0)
 
   // accumulate count of expert ids locally
   at::parallel_for(0, numel, 0, [&](int begin, int end) {
@@ -1139,6 +1139,7 @@ at::Tensor fused_experts_cpu(
           w2s.data_ptr<float>(),
           block_size_N,
           block_size_K,
+          topk_ids.data_ptr<int32_t>(),
           topk_weights_.data_ptr<float>(),
           sorted_ids,
           expert_ids,

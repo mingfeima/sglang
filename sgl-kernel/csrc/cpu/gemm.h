@@ -102,6 +102,7 @@ void fused_experts_fp8_kernel_impl(
     const float* __restrict__ w2s,
     int64_t block_size_N,
     int64_t block_size_K,
+    const int32_t* __restrict__ topk_ids,
     const float* __restrict__ topk_weights,
     const int32_t* __restrict__ sorted_ids,
     const int32_t* __restrict__ expert_ids,

@@ -5,18 +5,6 @@
 namespace {
 
 template <typename scalar_t>
-inline void fill_stub(scalar_t* __restrict__ out, scalar_t val, int64_t size) {
-  using Vec = at::vec::Vectorized<scalar_t>;
-  const Vec data_vec(val);
-  // at::vec::map<scalar_t>([data_vec](Vec out) { return out = data_vec; }, out, out, size);
-
-#pragma GCC unroll 4
-  for (int64_t d = 0; d < size; d += Vec::size()) {
-    data_vec.store(out + d);
-  }
-}
-
-template <typename scalar_t>
 inline void copy_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t size) {
   using Vec = at::vec::Vectorized<scalar_t>;
 // no remainder
@@ -49,9 +37,16 @@ inline void copy_mul_stub(scalar_t* __restrict__ out, const scalar_t* __restrict
   }
 }
 
+#define VALID_EXPERT_ID(id) (id >= 0)
+
 // acc from [topk, K] to [K]
 template <typename scalar_t>
-inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t topk, int64_t K) {
+inline void sum_stub(
+    scalar_t* __restrict__ out,
+    const scalar_t* __restrict__ input,
+    const int32_t* __restrict__ topk_ids,
+    int64_t topk,
+    int64_t K) {
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
   constexpr int kVecSize = bVec::size();
@@ -66,12 +61,15 @@ inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ in
       fVec sum_fvec0 = fVec(0.f);
       fVec sum_fvec1 = fVec(0.f);
       for (int t = 0; t < topk; ++t) {
-        bVec x_bvec = bVec::loadu(input + t * K + d);
-        fVec x_fvec0, x_fvec1;
-        std::tie(x_fvec0, x_fvec1) = at::vec::convert_to_float(x_bvec);
+        int32_t expert_id = topk_ids[t];
+        if (VALID_EXPERT_ID(expert_id)) {
+          bVec x_bvec = bVec::loadu(input + t * K + d);
+          fVec x_fvec0, x_fvec1;
+          std::tie(x_fvec0, x_fvec1) = at::vec::convert_to_float(x_bvec);
 
-        sum_fvec0 += x_fvec0;
-        sum_fvec1 += x_fvec1;
+          sum_fvec0 += x_fvec0;
+          sum_fvec1 += x_fvec1;
+        }
       }
       bVec out_bvec = convert_from_float_ext<scalar_t>(sum_fvec0, sum_fvec1);
       out_bvec.store(out + d);
@@ -163,6 +161,7 @@ void fused_experts_fp8_kernel_impl(
     const float* __restrict__ w2s,
     int64_t block_size_N,
     int64_t block_size_K,
+    const int32_t* __restrict__ topk_ids,
     const float* __restrict__ topk_weights,
     const int32_t* __restrict__ sorted_ids,
     const int32_t* __restrict__ expert_ids,
@@ -186,17 +185,10 @@ void fused_experts_fp8_kernel_impl(
   const int64_t stride_e = 2 * N * K;
   const int64_t stride_n = K;
 
-  // init ic2 to zero, since we have padded tokens and ic2 won't be fully filled
-  at::parallel_for(0, M * topk, 0, [&](int64_t begin, int64_t end) {
-    for (int64_t m = begin; m < end; ++m) {
-      fill_stub(ic2 + m * K, static_cast<scalar_t>(0), K);
-    }
-  });
-
   // here we only parallel on half of 2N to fuse silu_and_mul with gemm
-  at::parallel_for(0, MB * NB, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(MB * NB, [&](int64_t begin, int64_t end) {
     // get local pointers
-    int tid = at::get_thread_num();
+    int tid = get_thread_num();
     scalar_t* __restrict__ A = A_tmp + tid * BLOCK_M * K;
 
     bool is_brgemm_used = false;
@@ -249,7 +241,7 @@ void fused_experts_fp8_kernel_impl(
   });
 
   // stage 1.5: intermediate_cache1 = silu(intermediate_cache0)
-  at::parallel_for(0, M * topk, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(M * topk, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
       silu_and_mul_stub(ic1 + m * N, ic0 + m * 2 * N, ic0 + m * 2 * N + N, N);
     }
@@ -267,8 +259,8 @@ void fused_experts_fp8_kernel_impl(
   const int64_t stride_oc = IC;
 
   // parallel on [MB2, NB2]
-  at::parallel_for(0, MB2 * NB2, 0, [&](int64_t begin, int64_t end) {
-    int tid = at::get_thread_num();
+  parallel_for(MB2 * NB2, [&](int64_t begin, int64_t end) {
+    int tid = get_thread_num();
     alignas(64) scalar_t C[BLOCK_M * BLOCK_K];
 
     bool is_brgemm_used = false;
@@ -326,9 +318,9 @@ void fused_experts_fp8_kernel_impl(
 
   // stage 3: out = intermediate_cache2.sum(dim=1)
   //   from [M, topk, K] to [M, K]
-  at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(M, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
-      sum_stub(output + m * K, ic2 + m * topk * K, topk, K);
+      sum_stub(output + m * K, ic2 + m * topk * K, topk_ids + m * topk, topk, K);
     }
   });
 }
@@ -349,6 +341,7 @@ void fused_experts_fp8_kernel_impl(
       const float* __restrict__ w2s,                   \
       int64_t block_size_N,                            \
       int64_t block_size_K,                            \
+      const int32_t* __restrict__ topk_ids,            \
       const float* __restrict__ topk_weights,          \
       const int32_t* __restrict__ sorted_ids,          \
       const int32_t* __restrict__ expert_ids,          \
