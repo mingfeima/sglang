@@ -40,9 +40,16 @@ inline void copy_mul_stub(scalar_t* __restrict__ out, const float* __restrict__ 
   }
 }
 
+#define VALID_EXPERT_ID(id) (id >= 0)
+
 // acc from [topk, K] to [K]
 template <typename scalar_t>
-inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t topk, int64_t K) {
+inline void sum_stub(
+    scalar_t* __restrict__ out,
+    const scalar_t* __restrict__ input,
+    const int32_t* __restrict__ topk_ids,
+    int64_t topk,
+    int64_t K) {
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
   constexpr int kVecSize = bVec::size();
@@ -57,12 +64,15 @@ inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ in
       fVec sum_fvec0 = fVec(0.f);
       fVec sum_fvec1 = fVec(0.f);
       for (int t = 0; t < topk; ++t) {
-        bVec x_bvec = bVec::loadu(input + t * K + d);
-        fVec x_fvec0, x_fvec1;
-        std::tie(x_fvec0, x_fvec1) = at::vec::convert_to_float(x_bvec);
+        int32_t expert_id = topk_ids[t];
+        if (VALID_EXPERT_ID(expert_id)) {
+          bVec x_bvec = bVec::loadu(input + t * K + d);
+          fVec x_fvec0, x_fvec1;
+          std::tie(x_fvec0, x_fvec1) = at::vec::convert_to_float(x_bvec);
 
-        sum_fvec0 += x_fvec0;
-        sum_fvec1 += x_fvec1;
+          sum_fvec0 += x_fvec0;
+          sum_fvec1 += x_fvec1;
+        }
       }
       bVec out_bvec = convert_from_float_ext<scalar_t>(sum_fvec0, sum_fvec1);
       out_bvec.store(out + d);
@@ -595,6 +605,7 @@ void fused_experts_int8_kernel_impl(
     const int8_t* __restrict__ packed_w2,
     const float* __restrict__ w1s,
     const float* __restrict__ w2s,
+    const int32_t* __restrict__ topk_ids,
     const float* __restrict__ topk_weights,
     const int32_t* __restrict__ sorted_ids,
     const int32_t* __restrict__ expert_ids,
@@ -812,7 +823,7 @@ void fused_experts_int8_kernel_impl(
   //   from [M, topk, K] to [M, K]
   at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
-      sum_stub(output + m * K, ic2 + m * topk * K, topk, K);
+      sum_stub(output + m * K, ic2 + m * topk * K, topk_ids + m * topk, topk, K);
     }
   });
 }
@@ -831,6 +842,7 @@ void fused_experts_int8_kernel_impl(
       const int8_t* __restrict__ packed_w2,           \
       const float* __restrict__ w1s,                  \
       const float* __restrict__ w2s,                  \
+      const int32_t* __restrict__ topk_ids,           \
       const float* __restrict__ topk_weights,         \
       const int32_t* __restrict__ sorted_ids,         \
       const int32_t* __restrict__ expert_ids,         \

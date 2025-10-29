@@ -74,6 +74,7 @@ void fused_experts_int8_kernel_impl(
     const int8_t* __restrict__ packed_w2,
     const float* __restrict__ w1s,
     const float* __restrict__ w2s,
+    const int32_t* __restrict__ topk_ids,
     const float* __restrict__ topk_weights,
     const int32_t* __restrict__ sorted_ids,
     const int32_t* __restrict__ expert_ids,

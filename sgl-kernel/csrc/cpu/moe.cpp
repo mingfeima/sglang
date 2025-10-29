@@ -1116,6 +1116,7 @@ at::Tensor fused_experts_cpu(
           packed_w2.data_ptr<int8_t>(),
           w1s.data_ptr<float>(),
           w2s.data_ptr<float>(),
+          topk_ids.data_ptr<int32_t>(),
           topk_weights_.data_ptr<float>(),
           sorted_ids,
           expert_ids,
