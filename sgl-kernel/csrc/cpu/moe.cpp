@@ -25,6 +25,8 @@ namespace {
 //     3. abstract at::native::cpublas::brgemm with WoQ gemm (M = 1 & M != 1)
 //
 
+#define VALID_EXPERT_ID(id) (id >= 0)
+
 template <typename scalar_t>
 inline void fill_stub(scalar_t* __restrict__ out, scalar_t val, int64_t size) {
   using Vec = at::vec::Vectorized<scalar_t>;
@@ -64,7 +66,12 @@ inline void copy_mul_stub(scalar_t* __restrict__ out, const float* __restrict__ 
 
 // acc from [topk, K] to [K]
 template <typename scalar_t>
-inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t topk, int64_t K) {
+inline void sum_stub(
+    scalar_t* __restrict__ out,
+    const scalar_t* __restrict__ input,
+    const int32_t* __restrict__ topk_ids,
+    int64_t topk,
+    int64_t K) {
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
   constexpr int kVecSize = bVec::size();
@@ -79,12 +86,15 @@ inline void sum_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ in
       fVec sum_fvec0 = fVec(0.f);
       fVec sum_fvec1 = fVec(0.f);
       for (int t = 0; t < topk; ++t) {
-        bVec x_bvec = bVec::loadu(input + t * K + d);
-        fVec x_fvec0, x_fvec1;
-        std::tie(x_fvec0, x_fvec1) = at::vec::convert_to_float(x_bvec);
+        int32_t expert_id = topk_ids[t];
+        if (VALID_EXPERT_ID(expert_id)) {
+          bVec x_bvec = bVec::loadu(input + t * K + d);
+          fVec x_fvec0, x_fvec1;
+          std::tie(x_fvec0, x_fvec1) = at::vec::convert_to_float(x_bvec);
 
-        sum_fvec0 += x_fvec0;
-        sum_fvec1 += x_fvec1;
+          sum_fvec0 += x_fvec0;
+          sum_fvec1 += x_fvec1;
+        }
       }
       bVec out_bvec = convert_from_float_ext<scalar_t>(sum_fvec0, sum_fvec1);
       out_bvec.store(out + d);
@@ -143,7 +153,6 @@ int moe_align_block_size(
     int numel,
     int num_threads) {
 #define T_INDEX(tt) total_cnts + (tt) * num_experts
-#define VALID_EXPERT_ID(id) (id >= 0)
 
   // accumulate count of expert ids locally
   at::parallel_for(0, numel, 0, [&](int begin, int end) {
@@ -562,6 +571,7 @@ void fused_experts_kernel_impl(
     const scalar_t* __restrict__ input,
     const scalar_t* __restrict__ packed_w1,
     const scalar_t* __restrict__ packed_w2,
+    const int32_t* __restrict__ topk_ids,
     const float* __restrict__ topk_weights,
     const int32_t* __restrict__ sorted_ids,
     const int32_t* __restrict__ expert_ids,
@@ -741,7 +751,7 @@ void fused_experts_kernel_impl(
   //   from [M, topk, K] to [M, K]
   at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
-      sum_stub(output + m * K, ic2 + m * topk * K, topk, K);
+      sum_stub(output + m * K, ic2 + m * topk * K, topk_ids + m * topk, topk, K);
     }
   });
 }
@@ -1163,6 +1173,7 @@ at::Tensor fused_experts_cpu(
           hidden_states.data_ptr<scalar_t>(),
           packed_w1.data_ptr<scalar_t>(),
           packed_w2.data_ptr<scalar_t>(),
+          topk_ids.data_ptr<int32_t>(),
           topk_weights_.data_ptr<float>(),
           sorted_ids,
           expert_ids,
