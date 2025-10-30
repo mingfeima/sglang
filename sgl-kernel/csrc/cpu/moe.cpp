@@ -155,8 +155,8 @@ int moe_align_block_size(
 #define T_INDEX(tt) total_cnts + (tt) * num_experts
 
   // accumulate count of expert ids locally
-  at::parallel_for(0, numel, 0, [&](int begin, int end) {
-    int tid = at::get_thread_num();
+  parallel_for1(numel, [&](int begin, int end) {
+    int tid = get_thread_num1();
     int32_t* __restrict__ local_cnts = T_INDEX(tid + 1);
 
     for (int i = begin; i < end; ++i) {
@@ -187,8 +187,8 @@ int moe_align_block_size(
   }
   int num_tokens_post_pad = cumsums[num_experts];
 
-  at::parallel_for(0, numel, 0, [&](int begin, int end) {
-    int tid = at::get_thread_num();
+  parallel_for1(numel, [&](int begin, int end) {
+    int tid = get_thread_num1();
     // thread tid offsets in `total_cnts`
     int32_t* __restrict__ offsets = T_INDEX(tid);
 
@@ -223,7 +223,7 @@ int moe_align_block_size(
   //   shape : [num_token_blocks + 1]
   offsets[0] = 0;
   const int num_token_blocks = num_tokens_post_pad / BLOCK_M;
-  at::parallel_for(0, num_token_blocks, GRAIN_SIZE / BLOCK_M, [&](int begin, int end) {
+  parallel_for1(num_token_blocks, [&](int begin, int end) {
     for (int mb = begin; mb < end; ++mb) {
       offsets[mb + 1] = sorted_id_size(sorted_ids + mb * BLOCK_M);
     }
@@ -1046,14 +1046,14 @@ at::Tensor fused_experts_cpu(
   // init sorted_ids with `numel` as the padding number
   // init expert_ids with `num_experts`
   int64_t numel = M * topk;
-  at::parallel_for(0, max_num_blocks, GRAIN_SIZE / BLOCK_M, [&](int64_t begin, int64_t end) {
+  parallel_for1(max_num_blocks, [&](int64_t begin, int64_t end) {
     int64_t m_start = begin * BLOCK_M;
     int64_t m_size = std::min((end - begin) * BLOCK_M, max_num_tokens_padded - m_start);
     fill_stub(sorted_ids + m_start, (int32_t)numel, m_size);
     fill_stub(expert_ids + begin, (int32_t)E, end - begin);
   });
   // zero total_cnts and cumsums
-  at::parallel_for(0, (num_threads + 1) * E + (E + 1), GRAIN_SIZE, [&](int64_t begin, int64_t end) {
+  parallel_for1((num_threads + 1) * E + (E + 1), [&](int64_t begin, int64_t end) {
     fill_stub(total_cnts + begin, 0, end - begin);
   });
 
@@ -1134,6 +1134,7 @@ at::Tensor fused_experts_cpu(
       scalar_t* __restrict__ intermediate_cache0 = (scalar_t*)((void*)(C_tmp + num_threads * 2 * BLOCK_M * BLOCK_N));
       scalar_t* __restrict__ B_tmp = (scalar_t*)((void*)(intermediate_cache0 + M * topk * 2 * N));
 
+#if 1
       CHECK_MOE_SCALES_FP8(1, 2);
       fused_experts_fp8_kernel_impl(
           out_hidden_states.data_ptr<scalar_t>(),
@@ -1161,6 +1162,7 @@ at::Tensor fused_experts_cpu(
           E,
           topk,
           num_tokens_post_pad);
+#endif
     } else {
       scalar_t* __restrict__ A_tmp = intermediate_cache2 + M * topk * K;
       float* __restrict__ C_tmp = (float*)((void*)(A_tmp + num_threads * BLOCK_M * K));

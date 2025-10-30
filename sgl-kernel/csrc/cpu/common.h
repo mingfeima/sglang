@@ -135,10 +135,14 @@ inline int get_thread_num() {
 #endif
 }
 
+inline int get_thread_num1() {
+  return 0;
+}
+
 // balance payload across each thread
 template <typename T>
 inline void balance211(T n, T nth, T ith, T& n_start, T& n_end) {
-#if 0
+#if 1
     // onednn partition pattern
     T& n_my = n_end;
     if (nth <= 1 || n == 0) {
@@ -174,6 +178,11 @@ inline void parallel_for(int n, const func_t& f) {
 #else
   f(0, n);
 #endif
+}
+
+template <typename func_t>
+inline void parallel_for1(int n, const func_t& f) {
+  f(0, n);
 }
 
 // for 1d parallel, use `actual_nth`
