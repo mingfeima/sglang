@@ -232,10 +232,17 @@ inline void parallel_2d(int m, int n, const func_t& f) {
     int thread_block_m = div_up(m, nth_m);
     int thread_block_n = div_up(n, nth_n);
 
+#if 0
     int begin_m = ith_m * thread_block_m;
     int end_m = std::min(m, begin_m + thread_block_m);
     int begin_n = ith_n * thread_block_n;
     int end_n = std::min(n, begin_n + thread_block_n);
+#else
+    int begin_m, end_m;
+    balance211(m, nth_m, ith_m, begin_m, end_m);
+    int begin_n, end_n;
+    balance211(n, nth_n, ith_n, begin_n, end_n);
+#endif
 
     f(begin_m, end_m, begin_n, end_n);
   }

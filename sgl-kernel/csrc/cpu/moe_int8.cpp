@@ -621,7 +621,7 @@ void fused_experts_int8_kernel_impl(
   constexpr int64_t BLOCK_N = block_size_n();
 
   // stage 0: quantize input to uint8, [M, K]
-  at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(M, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
       quantize_row_int8<scalar_t>(Aq_tmp + m * K, As_tmp[m], input + m * K, K);
     }
@@ -736,7 +736,7 @@ void fused_experts_int8_kernel_impl(
   });
 
   // stage 1.5: quantize ic1 to uint8, [M * topk, N]
-  at::parallel_for(0, M * topk, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(M * topk, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
       quantize_row_int8<scalar_t>(Aq_tmp + m * N, As_tmp[m], ic1 + m * N, N);
     }
@@ -821,7 +821,7 @@ void fused_experts_int8_kernel_impl(
 
   // stage 3: out = intermediate_cache2.sum(dim=1)
   //   from [M, topk, K] to [M, K]
-  at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(M, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
       sum_stub(output + m * K, ic2 + m * topk * K, topk_ids + m * topk, topk, K);
     }

@@ -749,7 +749,7 @@ void fused_experts_kernel_impl(
 
   // stage 3: out = intermediate_cache2.sum(dim=1)
   //   from [M, topk, K] to [M, K]
-  at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
+  parallel_for(M, [&](int64_t begin, int64_t end) {
     for (int64_t m = begin; m < end; ++m) {
       sum_stub(output + m * K, ic2 + m * topk * K, topk_ids + m * topk, topk, K);
     }
