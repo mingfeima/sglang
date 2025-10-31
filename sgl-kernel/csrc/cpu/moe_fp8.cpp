@@ -191,6 +191,10 @@ void fused_experts_fp8_kernel_impl(
     int tid = get_thread_num();
     scalar_t* __restrict__ A = A_tmp + tid * BLOCK_M * K;
 
+    // prevous index for mb
+    // only load A from memory when mb changes
+    int64_t pre_mb = -1;
+
     bool is_brgemm_used = false;
 
     for (int64_t i = begin; i < end; ++i) {
@@ -212,10 +216,13 @@ void fused_experts_fp8_kernel_impl(
       const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(m_size);
       is_brgemm_used = is_brgemm_used || use_brgemm;
 
-      for (int64_t m = 0; m < m_size; ++m) {
-        int32_t index = A_ids[m] / topk;
-        copy_stub(A + m * K, input + index * K, K);
+      if (mb != pre_mb) {
+        for (int64_t m = 0; m < m_size; ++m) {
+          int32_t index = A_ids[m] / topk;
+          copy_stub(A + m * K, input + index * K, K);
+        }
       }
+      pre_mb = mb;
 
       const int64_t offset = offsets[mb];
       tinygemm_kernel<scalar_t>(

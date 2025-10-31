@@ -222,6 +222,9 @@ inline void parallel_2d(int m, int n, const func_t& f) {
     }
   }
 
+  nth_m = 2;
+  nth_n = nth / nth_m;
+
 #if defined(_OPENMP)
 #pragma omp parallel num_threads(nth)
   {
@@ -275,6 +278,7 @@ inline void loop_2d(int64_t mb0, int64_t mb1, int64_t nb0, int64_t nb1, int64_t 
   // get number of blocks for L2 in most inner loop
   int64_t cache_blocks_nb = get_cache_blocks<T>(chunk_size);
 
+#if 0
   // loop order: [NB / cache_blocks_nb, MB, cache_blocks_nb]
   // TODO: implement reverse order of [MB / cache_blocks_mb, NB, cache_blocks_mb]
   for (int64_t nbb = nb0; nbb < nb1; nbb += cache_blocks_nb) {
@@ -284,6 +288,13 @@ inline void loop_2d(int64_t mb0, int64_t mb1, int64_t nb0, int64_t nb1, int64_t 
       }
     }
   }
+#else
+  for (int64_t mb = mb0; mb < mb1; ++mb) {
+    for (int64_t nb = nb0; nb < nb1; ++nb) {
+      f(mb, nb, nb - nb0);
+    }
+  }
+#endif
 }
 
 // data indexing for dimension collapse

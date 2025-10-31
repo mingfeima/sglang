@@ -654,6 +654,10 @@ void fused_experts_int8_kernel_impl(
 
     alignas(64) float As[BLOCK_M];
 
+    // prevous index for mb
+    // only load A from memory when mb changes
+    int64_t pre_mb = -1;
+
     loop_2d<int8_t>(mb0, mb1, nb0, nb1, BLOCK_N * K * 2, [&](int64_t mb, int64_t nb, int64_t nb_offset) {
       // nb_upper from top half and nb_lower from bottom half
       int64_t nb_upper = nb, nb_lower = nb + NB;
@@ -670,11 +674,14 @@ void fused_experts_int8_kernel_impl(
       const int32_t* A_ids = sorted_ids + mb * BLOCK_M;
       int64_t m_size = offsets[mb + 1] - offsets[mb];
 
-      for (int64_t m = 0; m < m_size; ++m) {
-        int32_t index = A_ids[m] / topk;
-        copy_stub(A + m * K, Aq_tmp + index * K, K);
-        As[m] = As_tmp[index];
+      if (mb != pre_mb) {
+        for (int64_t m = 0; m < m_size; ++m) {
+          int32_t index = A_ids[m] / topk;
+          copy_stub(A + m * K, Aq_tmp + index * K, K);
+          As[m] = As_tmp[index];
+        }
       }
+      pre_mb = mb;
 
       if (use_brgemm) {
         // 1.b gemm: C0 = A @ B0
