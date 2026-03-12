@@ -57,7 +57,7 @@ from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.glm4 import Glm4Model
 from sglang.srt.multimodal.mm_utils import run_dp_sharded_mrope_vision_model
 from sglang.srt.server_args import get_global_server_args
-from sglang.srt.utils import add_prefix
+from sglang.srt.utils import add_prefix, is_npu
 from sglang.srt.utils.hf_transformers_utils import get_processor
 
 logger = logging.getLogger(__name__)
@@ -211,16 +211,26 @@ class Glm4vVisionPatchEmbed(nn.Module):
             bias=True,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.view(
-            -1,
-            self.in_channels,
-            self.temporal_patch_size,
-            self.patch_size,
-            self.patch_size,
+        k = self.in_channels * self.temporal_patch_size * self.patch_size**2
+        self.linear = nn.Linear(
+            in_features=k,
+            out_features=self.hidden_size,
+            bias=True,
+            dtype=self.proj.weight.dtype,
         )
-        x = self.proj(x).view(-1, self.hidden_size)
-        return x
+
+    def copy_conv3d_weight_to_linear(self):
+        # Call this after weight loading
+        with torch.no_grad():
+            self.linear.weight.copy_(self.proj.weight.view(self.hidden_size, -1))
+            self.linear.bias.copy_(self.proj.bias)
+        del self.proj
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # After copy_conv3d_weight_to_linear(), self.linear exists and
+        # self.proj has been deleted.  Input x is already 2-D:
+        #   (num_patches, C * T * P * P)
+        return self.linear(x)
 
 
 class Glm4vPatchMerger(nn.Module):
@@ -446,10 +456,16 @@ class Glm4vVisionModel(nn.Module):
 
     @property
     def dtype(self) -> torch.dtype:
+        # After Conv3d to Linear conversion, self.proj is deleted and
+        # self.linear takes its place.
+        if hasattr(self.patch_embed, "linear"):
+            return self.patch_embed.linear.weight.dtype
         return self.patch_embed.proj.weight.dtype
 
     @property
     def device(self) -> torch.device:
+        if hasattr(self.patch_embed, "linear"):
+            return self.patch_embed.linear.weight.device
         return self.patch_embed.proj.weight.device
 
     def rot_pos_emb(
@@ -513,6 +529,10 @@ class Glm4vVisionModel(nn.Module):
 
         rotary_pos_emb_cos = torch.cat([rotary_pos_emb_cos, rotary_pos_emb_cos], dim=-1)
         rotary_pos_emb_sin = torch.cat([rotary_pos_emb_sin, rotary_pos_emb_sin], dim=-1)
+
+        # cu_seqlens must be on cpu because of npu_flash_attention_unpad operator restriction
+        if is_npu():
+            cu_seqlens = cu_seqlens.to("cpu")
 
         # x.shape: (s, b, d) where b=1 for vision processing
         # transformers
@@ -754,8 +774,6 @@ class Glm4vForConditionalGeneration(nn.Module):
                 name = name.replace(r"model.language_model.", r"model.")
             if "model.visual." in name:
                 name = name.replace("model.visual.", "visual.")
-            if name.startswith("lm_head.") and not self.pp_group.is_last_rank:
-                continue
 
             for param_name, weight_name, shard_id in stacked_params_mapping:
                 if weight_name not in name:
@@ -797,6 +815,7 @@ class Glm4vForConditionalGeneration(nn.Module):
                         self.config, name, loaded_weight
                     )
                 weight_loader(param, loaded_weight)
+        self.visual.patch_embed.copy_conv3d_weight_to_linear()
 
     def get_embed_and_head(self):
         return self.model.embed_tokens.weight, self.lm_head.weight

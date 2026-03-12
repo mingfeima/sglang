@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import dataclasses
 from enum import Enum, auto
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import torch
 
+from sglang.srt.environ import envs
+
 if TYPE_CHECKING:
-    from sglang.srt.layers.logits_processor import LogitsMetadata
+    from sglang.srt.layers.logits_processor import LogitsMetadata, LogitsProcessorOutput
+    from sglang.srt.managers.schedule_batch import ScheduleBatch
+    from sglang.srt.speculative.eagle_info import EagleVerifyOutput
+    from sglang.srt.speculative.ngram_info import NgramVerifyInput
 
 
 class LogprobStage(Enum):
@@ -63,11 +68,13 @@ def get_top_logprobs_raw(
     top_logprobs_nums: List[int],
     stage: LogprobStage,
     extend_logprob_pruned_lens_cpu: Optional[List[int]] = None,
+    no_copy_to_cpu: bool = False,
 ):
     max_k = max(top_logprobs_nums)
     values, indices = logprobs.topk(max_k, dim=-1)
-    values = values.tolist()
-    indices = indices.tolist()
+    if not no_copy_to_cpu:
+        values = values.tolist()
+        indices = indices.tolist()
 
     top_logprobs_val = []
     top_logprobs_idx = []
@@ -105,57 +112,73 @@ def get_top_logprobs_prefill(
 def get_top_logprobs(
     logprobs: torch.Tensor,
     top_logprobs_nums: List[int],
+    no_copy_to_cpu: bool = False,
 ):
-    return get_top_logprobs_raw(logprobs, top_logprobs_nums, stage=LogprobStage.DECODE)
+    return get_top_logprobs_raw(
+        logprobs,
+        top_logprobs_nums,
+        stage=LogprobStage.DECODE,
+        no_copy_to_cpu=no_copy_to_cpu,
+    )
 
 
 def get_token_ids_logprobs_raw(
     logprobs: torch.Tensor,
-    token_ids_logprobs: List[Optional[List[int]]],
+    token_ids_logprobs_list: List[Optional[List[int]]],
     stage: LogprobStage,
     extend_logprob_pruned_lens_cpu: Optional[List[int]] = None,
-    delay_cpu_copy: bool = False,
+    no_copy_to_cpu: bool = False,
 ):
     vals, idxs = [], []
     if stage == LogprobStage.DECODE:
-        for i, token_ids in enumerate(token_ids_logprobs):
+        for i, token_ids in enumerate(token_ids_logprobs_list):
             if token_ids is None:
                 vals.append([])
                 idxs.append([])
             else:
-                vals.append(logprobs[i, token_ids].tolist())
+                token_ids_tensor = torch.tensor(token_ids, dtype=torch.long).to(
+                    logprobs.device, non_blocking=True
+                )
+                row = logprobs[i, token_ids_tensor]
+                vals.append(row if no_copy_to_cpu else row.tolist())
                 idxs.append(token_ids)
     else:  # prefill
         pt = 0
-        for token_ids, pruned_len in zip(
-            token_ids_logprobs, extend_logprob_pruned_lens_cpu
+        for i, (token_ids, pruned_len) in enumerate(
+            zip(token_ids_logprobs_list, extend_logprob_pruned_lens_cpu)
         ):
             if pruned_len <= 0:
                 vals.append([])
                 idxs.append([])
                 continue
-            pos_logprobs = logprobs[pt : pt + pruned_len, token_ids]
-            vals.append(pos_logprobs if delay_cpu_copy else pos_logprobs.tolist())
+            token_ids_tensor = torch.tensor(token_ids, dtype=torch.long).to(
+                logprobs.device, non_blocking=True
+            )
+            pos_logprobs = logprobs[pt : pt + pruned_len, token_ids_tensor]
+            vals.append(pos_logprobs if no_copy_to_cpu else pos_logprobs.tolist())
             idxs.append([token_ids for _ in range(pruned_len)])
             pt += pruned_len
     return vals, idxs
 
 
 def get_token_ids_logprobs_prefill(
-    all_logprobs, logits_metadata: LogitsMetadata, delay_cpu_copy=False
+    all_logprobs, logits_metadata: LogitsMetadata, no_copy_to_cpu=False
 ):
     return get_token_ids_logprobs_raw(
         all_logprobs,
         logits_metadata.token_ids_logprobs,
         stage=LogprobStage.PREFILL,
         extend_logprob_pruned_lens_cpu=logits_metadata.extend_logprob_pruned_lens_cpu,
-        delay_cpu_copy=delay_cpu_copy,
+        no_copy_to_cpu=no_copy_to_cpu,
     )
 
 
-def get_token_ids_logprobs(logprobs, token_ids_logprobs):
+def get_token_ids_logprobs(logprobs, token_ids_logprobs, no_copy_to_cpu=False):
     return get_token_ids_logprobs_raw(
-        logprobs, token_ids_logprobs, stage=LogprobStage.DECODE
+        logprobs,
+        token_ids_logprobs,
+        stage=LogprobStage.DECODE,
+        no_copy_to_cpu=no_copy_to_cpu,
     )
 
 
@@ -304,3 +327,99 @@ def get_token_ids_logprobs_chunk(
 
         pt += pruned_len
     return next_split_pruned_len
+
+
+def add_output_logprobs_for_spec_v1(
+    batch: ScheduleBatch,
+    res: Union[EagleVerifyOutput, NgramVerifyInput],
+    logits_output: Optional[LogitsProcessorOutput] = None,
+):
+    # Extract args
+    if logits_output is None:
+        logits_output = res.logits_output
+
+    if hasattr(res, "accept_length_per_req_cpu"):
+        accept_length_per_req_cpu = res.accept_length_per_req_cpu
+    else:
+        # FIXME: Get a NgramVerifyOutput class and use that instead of this hack.
+        accept_length_per_req_cpu = res.accept_length.tolist()
+
+    top_logprobs_nums = batch.top_logprobs_nums
+    token_ids_logprobs = batch.token_ids_logprobs
+    accepted_indices = res.accepted_indices
+    assert len(accepted_indices) == len(logits_output.next_token_logits)
+
+    temperatures = batch.sampling_info.temperatures
+    num_draft_tokens = batch.spec_info.draft_token_num
+    # acceptance indices are the indices in a "flattened" batch.
+    # dividing it to num_draft_tokens will yield the actual batch index.
+    temperatures = temperatures[accepted_indices // num_draft_tokens]
+    if envs.SGLANG_RETURN_ORIGINAL_LOGPROB.get():
+        logprobs = torch.nn.functional.log_softmax(
+            logits_output.next_token_logits, dim=-1
+        )
+    else:
+        logprobs = torch.nn.functional.log_softmax(
+            logits_output.next_token_logits / temperatures, dim=-1
+        )
+    batch_next_token_ids = res.verified_id
+    num_tokens_per_req = [accept + 1 for accept in accept_length_per_req_cpu]
+
+    # We should repeat top_logprobs_nums to match num_tokens_per_req.
+    top_logprobs_nums_repeat_interleaved = [
+        num
+        for num, num_tokens in zip(top_logprobs_nums, num_tokens_per_req)
+        for _ in range(num_tokens)
+    ]
+
+    token_ids_logprobs_repeat_interleaved = [
+        token_ids
+        for token_ids, num_tokens in zip(token_ids_logprobs, num_tokens_per_req)
+        for _ in range(num_tokens)
+    ]
+
+    # Extract logprobs
+    should_top_logprobs = any(x > 0 for x in top_logprobs_nums)
+    should_token_ids_logprobs = any(x is not None for x in token_ids_logprobs)
+    if should_top_logprobs:
+        (
+            logits_output.next_token_top_logprobs_val,
+            logits_output.next_token_top_logprobs_idx,
+        ) = get_top_logprobs(
+            logprobs,
+            top_logprobs_nums_repeat_interleaved,
+        )
+
+    if should_token_ids_logprobs:
+        (
+            logits_output.next_token_token_ids_logprobs_val,
+            logits_output.next_token_token_ids_logprobs_idx,
+        ) = get_token_ids_logprobs(
+            logprobs,
+            token_ids_logprobs_repeat_interleaved,
+        )
+
+    logits_output.next_token_logprobs = logprobs[
+        torch.arange(len(batch_next_token_ids), device=batch.sampling_info.device),
+        batch_next_token_ids,
+    ]
+
+    # Add output logprobs to the request
+    pt = 0
+    next_token_logprobs = logits_output.next_token_logprobs.tolist()
+    verified_ids = batch_next_token_ids.tolist()
+    token_top_logprobs_val = logits_output.next_token_top_logprobs_val
+    token_top_logprobs_idx = logits_output.next_token_top_logprobs_idx
+    for req, num_tokens in zip(batch.reqs, num_tokens_per_req, strict=True):
+        for _ in range(num_tokens):
+            # TODO: add token_ids_logprobs to each request
+            if req.return_logprob:
+                req.output_token_logprobs_val.append(next_token_logprobs[pt])
+                req.output_token_logprobs_idx.append(verified_ids[pt])
+                if req.top_logprobs_num > 0:
+                    assert (
+                        should_top_logprobs
+                    ), "Inconsistent state: should_top_logprobs is False"
+                    req.output_top_logprobs_val.append(token_top_logprobs_val[pt])
+                    req.output_top_logprobs_idx.append(token_top_logprobs_idx[pt])
+            pt += 1

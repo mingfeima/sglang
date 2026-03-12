@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 """Inference-only Qwen3-VL model compatible with HuggingFace weights."""
+
 import math
 from typing import Iterable, List, Optional, Tuple
 
@@ -42,7 +43,7 @@ from sglang.srt.models.qwen3_vl_moe import (
     Qwen3VLMoeForConditionalGeneration,
     load_fused_expert_weights,
 )
-from sglang.srt.utils import add_prefix, logger
+from sglang.srt.utils import add_prefix, is_npu, logger
 
 
 class Qwen3OmniMoeAudioEncoderLayer(nn.Module):
@@ -278,6 +279,9 @@ class Qwen3OmniMoeAudioEncoder(PreTrainedModel):
         cu_seqlens = torch.tensor(cu_chunk_lens, device=aftercnn_lens.device).cumsum(
             -1, dtype=torch.int32
         )
+        # cu_seqlens must be on cpu because of npu_flash_attention_unpad operator restriction
+        if is_npu():
+            cu_seqlens = cu_seqlens.to("cpu")
 
         for encoder_layer in self.layers:
             layer_outputs = encoder_layer(
@@ -520,10 +524,8 @@ class Qwen3OmniMoeForConditionalGeneration(PreTrainedModel):
 
         num_experts = self.config.num_experts
 
-        # Cache params_dict to avoid repeated expensive traversal of model parameters
-        if not hasattr(self, "_cached_params_dict"):
-            self._cached_params_dict = dict(self.named_parameters())
-        params_dict = self._cached_params_dict
+        # Pre-define `params_dict` to avoid repeated expensive traversal of model parameters.
+        params_dict = dict(self.named_parameters())
 
         for name, loaded_weight in weights:
             name = name.replace(r"model.language_model.", r"model.")
