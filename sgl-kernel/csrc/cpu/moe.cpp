@@ -1235,8 +1235,8 @@ at::Tensor shared_expert_cpu(
     at::Tensor& hidden_states,
     at::Tensor& w1,
     at::Tensor& w2,
-    at::Tensor& fused_experts_out,
-    double routed_scaling_factor,
+    const std::optional<at::Tensor>& fused_experts_out,
+    const std::optional<double> routed_scaling_factor,
     bool inplace,
     bool use_int8_w8a8,
     bool use_fp8_w8a16,
@@ -1252,15 +1252,22 @@ at::Tensor shared_expert_cpu(
   constexpr int64_t BLOCK_M = block_size_m();
   constexpr int64_t BLOCK_N = block_size_n();
 
+  double routed_scaling_factor_value = 0;
+  if (routed_scaling_factor.has_value()) {
+    TORCH_CHECK(fused_experts_out.has_value(), "shared_expert_cpu: expect fused_experts_out.");
+    const auto fused_experts_out_tensor = fused_experts_out.value();
+    routed_scaling_factor_value = routed_scaling_factor.value();
+    CHECK_INPUT(fused_experts_out_tensor);
+    CHECK_EQ(hidden_states.sizes(), fused_experts_out_tensor.sizes());
+  }
+
   const auto st = hidden_states.scalar_type();
   CHECK_INPUT(hidden_states);
-  CHECK_INPUT(fused_experts_out);
   CHECK_INPUT(w1);
   CHECK_INPUT(w2);
   CHECK_DIM(2, hidden_states);
   CHECK_DIM(2, w1);
   CHECK_DIM(2, w2);
-  CHECK_EQ(hidden_states.sizes(), fused_experts_out.sizes());
   CHECK_EQ(hidden_states.scalar_type(), st);
 
   int64_t M = hidden_states.size(0);
@@ -1328,8 +1335,8 @@ at::Tensor shared_expert_cpu(
           packed_w2.data_ptr<int8_t>(),
           w1s.data_ptr<float>(),
           w2s.data_ptr<float>(),
-          fused_experts_out.data_ptr<scalar_t>(),
-          routed_scaling_factor,
+          conditional_data_ptr<scalar_t>(fused_experts_out),
+          routed_scaling_factor_value,
           M,
           N,
           K);
@@ -1351,8 +1358,8 @@ at::Tensor shared_expert_cpu(
           w2s.data_ptr<float>(),
           block_size_N,
           block_size_K,
-          fused_experts_out.data_ptr<scalar_t>(),
-          routed_scaling_factor,
+          conditional_data_ptr<scalar_t>(fused_experts_out),
+          routed_scaling_factor_value,
           M,
           N,
           K);
@@ -1364,8 +1371,8 @@ at::Tensor shared_expert_cpu(
           hidden_states.data_ptr<scalar_t>(),
           packed_w1.data_ptr<scalar_t>(),
           packed_w2.data_ptr<scalar_t>(),
-          fused_experts_out.data_ptr<scalar_t>(),
-          routed_scaling_factor,
+          conditional_data_ptr<scalar_t>(fused_experts_out),
+          routed_scaling_factor_value,
           M,
           N,
           K);
