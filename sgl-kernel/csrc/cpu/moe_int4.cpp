@@ -2,36 +2,18 @@
 #include "gemm.h"
 #include "moe.h"
 
-// TODO: stride access
 template <int64_t N>
 inline void copy_bias(const float* bias_ptr, float* y_buf, int64_t m, int64_t ldn) {
-  if (bias_ptr) {
-    for (int i = 0; i < m; ++i) {
-      int j = 0;
-#if defined(CPU_CAPABILITY_AVX512)
+  using Vec = at::vec::Vectorized<float>;
+  constexpr int kVecSize = Vec::size();
+  static_assert(N % kVecSize == 0, "copy_bias requires N to be a multiple of Vectorized<float>::size()");
+  const bool has_bias = bias_ptr != nullptr;
+  const Vec zero_vec(0.f);
+  for (int i = 0; i < m; ++i) {
 #pragma GCC unroll 2
-      for (; j < N; j += 16) {
-        __m512 bias_vec = _mm512_loadu_ps(bias_ptr + j);
-        _mm512_storeu_ps(y_buf + i * ldn + j, bias_vec);
-      }
-#endif
-      for (; j < N; ++j) {
-        y_buf[i * ldn + j] = bias_ptr[j];
-      }
-    }
-  } else {  // initialize to zero
-    for (int i = 0; i < m; ++i) {
-      int j = 0;
-#if defined(CPU_CAPABILITY_AVX512)
-#pragma GCC unroll 2
-      for (; j < N; j += 16) {
-        __m512 zero_vec = _mm512_setzero_ps();
-        _mm512_storeu_ps(y_buf + i * ldn + j, zero_vec);
-      }
-#endif
-      for (; j < N; ++j) {
-        y_buf[i * ldn + j] = 0;
-      }
+    for (int j = 0; j < N; j += kVecSize) {
+      Vec vec = has_bias ? Vec::loadu(bias_ptr + j) : zero_vec;
+      vec.store(y_buf + i * ldn + j);
     }
   }
 }
