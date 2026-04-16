@@ -780,6 +780,7 @@ void shared_expert_int8_kernel_impl(
   const int64_t stride_n = packed_K;
 
   const bool use_brgemm = can_use_brgemm<int8_t>(M);
+  const bool apply_scaling_factor = fused_experts_out != nullptr;
 
   // here we only parallel on half of 2N to fuse silu_and_mul with gemm
   parallel_2d(MB, NB, [&](int64_t mb0, int64_t mb1, int64_t nb0, int64_t nb1) {
@@ -929,9 +930,11 @@ void shared_expert_int8_kernel_impl(
 
       // 2.b copy from C to output and add fused_experts_out
       scalar_t* __restrict__ out = output + mb * BLOCK_M * K + nb * BLOCK_N;
-      const scalar_t* __restrict__ fused_out = fused_experts_out + mb * BLOCK_M * K + nb * BLOCK_N;
+      const scalar_t* __restrict__ fused_out =
+          apply_scaling_factor ? fused_experts_out + mb * BLOCK_M * K + nb * BLOCK_N : nullptr;
       for (int64_t m = 0; m < m_size; ++m) {
-        add_mul_stub(out + m * K, C + m * BLOCK_N, fused_out + m * K, routed_scaling_factor, n_size);
+        const scalar_t* __restrict__ fused_out_row = apply_scaling_factor ? (fused_out + m * K) : nullptr;
+        add_mul_stub(out + m * K, C + m * BLOCK_N, fused_out_row, routed_scaling_factor, n_size);
       }
     });
 
