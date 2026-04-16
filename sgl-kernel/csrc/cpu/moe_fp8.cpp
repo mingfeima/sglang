@@ -239,6 +239,7 @@ void shared_expert_fp8_kernel_impl(
   int64_t blocks_n_per_group = block_size_N / BLOCK_N;
 
   const bool use_brgemm = can_use_brgemm<at::Float8_e4m3fn>(M);
+  const bool apply_scaling_factor = fused_experts_out != nullptr;
 
   int64_t B_tmp_size_per_thread = MAX_CACHE_BLOCK_SIZE * BLOCK_N * std::max(K, N);
 
@@ -322,9 +323,11 @@ void shared_expert_fp8_kernel_impl(
 
       // 2.b copy from C to output and add fused_experts_out
       scalar_t* __restrict__ out = output + mb * BLOCK_M * K + nb * BLOCK_N;
-      const scalar_t* __restrict__ fused_out = fused_experts_out + mb * BLOCK_M * K + nb * BLOCK_N;
+      const scalar_t* __restrict__ fused_out =
+          apply_scaling_factor ? fused_experts_out + mb * BLOCK_M * K + nb * BLOCK_N : nullptr;
       for (int64_t m = 0; m < m_size; ++m) {
-        add_mul_stub(out + m * K, C + m * BLOCK_N, fused_out + m * K, routed_scaling_factor, n_size);
+        const scalar_t* __restrict__ fused_out_row = apply_scaling_factor ? (fused_out + m * K) : nullptr;
+        add_mul_stub(out + m * K, C + m * BLOCK_N, fused_out_row, routed_scaling_factor, n_size);
       }
     });
   });

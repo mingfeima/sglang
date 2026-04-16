@@ -11,11 +11,32 @@ inline void fill_stub(scalar_t* __restrict__ out, scalar_t val, int64_t size) {
 template <typename scalar_t>
 inline void copy_stub(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, int64_t size) {
   using Vec = at::vec::Vectorized<scalar_t>;
-// no remainder
+  constexpr int kVecSize = Vec::size();
+  int64_t d;
 #pragma GCC unroll 4
-  for (int64_t d = 0; d < size; d += Vec::size()) {
+  for (d = 0; d <= size - kVecSize; d += kVecSize) {
     Vec data = Vec::loadu(input + d);
     data.store(out + d);
+  }
+  for (; d < size; ++d) {
+    out[d] = input[d];
+  }
+}
+
+template <typename scalar_t>
+inline void copy_stub(scalar_t* __restrict__ out, const float* __restrict__ input, int64_t size) {
+  using bVec = at::vec::Vectorized<scalar_t>;
+  using fVec = at::vec::Vectorized<float>;
+  constexpr int kVecSize = bVec::size();
+  int64_t d;
+#pragma GCC unroll 4
+  for (d = 0; d <= size - kVecSize; d += kVecSize) {
+    auto [x0, x1] = load_float_vec2(input + d);
+    bVec out_vec = convert_from_float_ext<scalar_t>(x0, x1);
+    out_vec.store(out + d);
+  }
+  for (; d < size; ++d) {
+    out[d] = static_cast<scalar_t>(input[d]);
   }
 }
 
@@ -96,6 +117,13 @@ inline void add_mul_stub(
   static_assert(
       std::is_same_v<input_t, float> || std::is_same_v<input_t, scalar_t>,
       "add_mul_stub only supports input_t == float or input_t == scalar_t");
+
+  // out = input (without scale factor)
+  if (input2 == nullptr) {
+    copy_stub(out, input, size);
+    return;
+  }
+
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
   constexpr int kVecSize = bVec::size();
