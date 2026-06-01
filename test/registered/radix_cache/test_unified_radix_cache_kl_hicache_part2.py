@@ -17,7 +17,7 @@ from sglang.test.test_utils import (
 MAMBA_MODEL = "Qwen/Qwen3-Next-80B-A3B-Instruct"
 MAMBA_TRACK_INTERVAL = 128
 
-register_cuda_ci(est_time=768, stage="base-c", runner_config="8-gpu-h200")
+register_cuda_ci(est_time=549, stage="base-c", runner_config="8-gpu-h200")
 
 
 class TestUnifiedMambaHiCacheL3(AccuracyTwoPassMixin, CustomTestCase):
