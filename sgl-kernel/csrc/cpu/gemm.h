@@ -16,6 +16,68 @@ constexpr int block_size_n() {
   return 2 * TILE_N;
 }
 
+// ---------------------------------------------------------------------------
+// Simplified GEMM blocking heuristics (inspired by oneDNN matmul AMX path)
+//
+// oneDNN splits the problem into:
+//   * micro tiles  (M_blk / N_blk / K_blk)  -> single brgemm call
+//   * parallel chunks (M_chunk / N_chunk)   -> thread assignment unit
+//   * K-chunk loop with add_C accumulation  -> keep A/B panels in L2
+//
+// We mirror that layout with a small, fixed heuristic instead of the full
+// bandwidth-model search in amx_blocking_heuristics.cpp.
+// ---------------------------------------------------------------------------
+struct gemm_blocking_params {
+  int64_t m_par;  // rows per OpenMP chunk (multiple of block_size_m)
+  int64_t n_par;  // cols per OpenMP chunk (multiple of block_size_n)
+  int64_t k_blk;  // K panel per brgemm call (multiple of TILE_K)
+};
+
+// Match oneDNN L2_threshold(): use ~75% of a 2 MiB per-core L2.
+inline int64_t gemm_l2_budget_bytes() {
+  return (2048 * 1024 * 3) / 4;
+}
+
+// Upper bound for stack-resident {M_tile x k_blk} temporaries.
+inline int64_t gemm_max_k_blk() {
+  return 4096;
+}
+
+// Pick k_blk so one brgemm's A-panel + B-panel fits in L2.
+//   panel_bytes ~= elem_bytes * (m_tile + n_tile) * k_blk
+inline int64_t compute_k_blk(int64_t m_tile, int64_t n_tile, int64_t elem_bytes = 2) {
+  const int64_t budget = gemm_l2_budget_bytes();
+  const int64_t panel_factor = elem_bytes * (m_tile + n_tile);
+  int64_t k_blk = budget / panel_factor;
+  k_blk = (k_blk / TILE_K) * TILE_K;
+  k_blk = std::max<int64_t>(TILE_K, k_blk);
+  k_blk = std::min<int64_t>(k_blk, gemm_max_k_blk());
+  return k_blk;
+}
+
+// Pick coarse parallel tiles. Uses the same sqrt split as parallel_2d(), but
+// on row/column counts instead of 32x32 micro blocks.
+inline gemm_blocking_params compute_gemm_blocking(int64_t M, int64_t N, int64_t K, int64_t elem_bytes = 2) {
+  constexpr int64_t TILE_M = block_size_m();
+  constexpr int64_t TILE_N = block_size_n();
+
+  const int nth = adjust_num_threads(static_cast<int>(div_up(M, TILE_M)));
+
+  // Bias toward M when M >> N (same idea as oneDNN horizontal traversal).
+  const float aspect = float(M) / float(std::max<int64_t>(N, 1));
+  int64_t m_chunks = std::max<int64_t>(1, int64_t(std::ceil(std::sqrt(aspect * nth))));
+  int64_t n_chunks = std::max<int64_t>(1, int64_t(nth / m_chunks));
+
+  int64_t m_par = div_up(M, m_chunks);
+  int64_t n_par = div_up(N, n_chunks);
+  m_par = div_up(m_par, TILE_M) * TILE_M;
+  n_par = div_up(n_par, TILE_N) * TILE_N;
+
+  const int64_t k_blk = compute_k_blk(TILE_M, TILE_N, elem_bytes);
+  (void)K;
+  return {m_par, n_par, k_blk};
+}
+
 // define threshold using brgemm (intel AMX)
 template <typename T>
 inline bool can_use_brgemm(int M);

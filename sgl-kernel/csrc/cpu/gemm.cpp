@@ -300,6 +300,39 @@ struct tinygemm_kernel_nn<at::BFloat16, has_bias, BLOCK_M, BLOCK_N> {
 
 template <typename scalar_t, bool has_bias>
 struct brgemm {
+  // Single K-panel matmul into FP32 Ctmp.  Set add_C=true to accumulate along K.
+  static inline void compute(
+      const scalar_t* __restrict__ A,
+      const scalar_t* __restrict__ B,
+      float* __restrict__ Ctmp,
+      int64_t M,
+      int64_t N,
+      int64_t K,
+      int64_t lda,
+      int64_t ldb,
+      bool add_C) {
+    constexpr int BLOCK_N = block_size_n();
+    at::native::cpublas::brgemm(M, N, K, lda, ldb, BLOCK_N, add_C, A, B, Ctmp);
+  }
+
+  static inline void store(
+      scalar_t* __restrict__ C,
+      const float* __restrict__ Ctmp,
+      const float* __restrict__ bias,
+      int64_t M,
+      int64_t N,
+      int64_t ldc) {
+    constexpr int BLOCK_N = block_size_n();
+    for (int64_t m = 0; m < M; ++m) {
+      if constexpr (has_bias) {
+        copy_add_stub(C + m * ldc, Ctmp + m * BLOCK_N, bias, N);
+      } else {
+        copy_stub(C + m * ldc, Ctmp + m * BLOCK_N, N);
+      }
+    }
+  }
+
+  // Legacy full-K helper (still used by tinygemm fallback).
   static inline void apply(
       const scalar_t* __restrict__ A,
       const scalar_t* __restrict__ B,
@@ -312,18 +345,24 @@ struct brgemm {
       int64_t lda,
       int64_t ldb,
       int64_t ldc) {
-    constexpr int BLOCK_N = block_size_n();
-    at::native::cpublas::brgemm(M, N, K, lda, ldb, BLOCK_N, /* add_C */ false, A, B, Ctmp);
-
-    // copy from Ctmp to C
-    for (int64_t m = 0; m < M; ++m) {
-      if constexpr (has_bias) {
-        copy_add_stub(C + m * ldc, Ctmp + m * BLOCK_N, bias, N);
-      } else {
-        copy_stub(C + m * ldc, Ctmp + m * BLOCK_N, N);
-      }
-    }
+    compute(A, B, Ctmp, M, N, K, lda, ldb, /* add_C */ false);
+    store(C, Ctmp, bias, M, N, ldc);
   }
+
+  static inline void compute(
+      const float* __restrict__ A,
+      const float* __restrict__ B,
+      float* __restrict__ Ctmp,
+      int64_t M,
+      int64_t N,
+      int64_t K,
+      int64_t lda,
+      int64_t ldb,
+      bool add_C) {
+    constexpr int BLOCK_N = block_size_n();
+    at::native::cpublas::brgemm(M, N, K, lda, ldb, BLOCK_N, add_C, A, B, Ctmp);
+  }
+
   static inline void apply(
       const float* __restrict__ A,
       const float* __restrict__ B,
@@ -336,8 +375,7 @@ struct brgemm {
       int64_t lda,
       int64_t ldb,
       int64_t ldc) {
-    constexpr int BLOCK_N = block_size_n();
-    at::native::cpublas::brgemm(M, N, K, lda, ldb, BLOCK_N, /* add_C */ false, A, B, Ctmp);
+    compute(A, B, Ctmp, M, N, K, lda, ldb, /* add_C */ false);
   }
 };
 
@@ -454,6 +492,107 @@ void tinygemm_kernel(
   // TODO : add intrinsic path
 }
 
+// Shared blocked GEMM driver for VNNI weight_packed_linear.
+//
+// Loop nest (mirrors oneDNN horizontal matmul):
+//   parallel_2d(M_chunk, N_chunk)
+//     for k0 in K step k_blk          // K-chunk, accumulate with add_C
+//       for n in [n0, n1) step TILE_N // N micro tile
+//         for m in [m0, m1) step TILE_M
+//           brgemm / tinygemm
+//           store on last K-chunk
+template <typename scalar_t, bool has_bias>
+void weight_packed_linear_blocked(
+    scalar_t* __restrict__ out,
+    const scalar_t* __restrict__ mat1,
+    const scalar_t* __restrict__ mat2,
+    const float* __restrict__ bias,
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int64_t mat1_strideM,
+    int64_t out_strideM) {
+  constexpr int64_t TILE_M = block_size_m();
+  constexpr int64_t TILE_N = block_size_n();
+
+  const gemm_blocking_params params = compute_gemm_blocking(M, N, K, sizeof(scalar_t));
+  const int64_t MC = div_up(M, params.m_par);
+  const int64_t NC = div_up(N, params.n_par);
+  const bool use_brgemm = can_use_brgemm<scalar_t>(M);
+
+  parallel_2d(MC, NC, [&](int64_t mc0, int64_t mc1, int64_t nc0, int64_t nc1) {
+    alignas(64) float Ctmp[TILE_M * TILE_N];
+
+    for (int64_t mc = mc0; mc < mc1; ++mc) {
+      const int64_t m_par_start = mc * params.m_par;
+      const int64_t m_par_end = std::min(M, m_par_start + params.m_par);
+
+      for (int64_t nc = nc0; nc < nc1; ++nc) {
+        const int64_t n_par_start = nc * params.n_par;
+        const int64_t n_par_end = std::min(N, n_par_start + params.n_par);
+
+        if (use_brgemm) {
+          // K-chunk outermost: reuse each B[:, k0:k0+k_blk) panel across all M.
+          for (int64_t k0 = 0; k0 < K; k0 += params.k_blk) {
+            const int64_t k_size = std::min(params.k_blk, K - k0);
+            const bool first_k = (k0 == 0);
+            const bool last_k = (k0 + k_size >= K);
+
+            for (int64_t n = n_par_start; n < n_par_end; n += TILE_N) {
+              const int64_t n_size = std::min(TILE_N, n_par_end - n);
+
+              for (int64_t m = m_par_start; m < m_par_end; m += TILE_M) {
+                const int64_t m_size = std::min(TILE_M, m_par_end - m);
+
+                brgemm<scalar_t, has_bias>::compute(
+                    mat1 + m * mat1_strideM + k0,
+                    mat2 + n * K + k0,
+                    Ctmp,
+                    m_size,
+                    n_size,
+                    k_size,
+                    mat1_strideM,
+                    n_size,
+                    !first_k);
+
+                if (last_k) {
+                  brgemm<scalar_t, has_bias>::store(
+                      out + m * out_strideM + n, Ctmp, bias + n, m_size, n_size, out_strideM);
+                }
+              }
+            }
+          }
+        } else {
+          // Small-M AVX512 path: keep full-K tinygemm (M <= 4 for bf16).
+          for (int64_t n = n_par_start; n < n_par_end; n += TILE_N) {
+            const int64_t n_size = std::min(TILE_N, n_par_end - n);
+            for (int64_t m = m_par_start; m < m_par_end; m += TILE_M) {
+              const int64_t m_size = std::min(TILE_M, m_par_end - m);
+              tinygemm_kernel<scalar_t, has_bias>(
+                  mat1 + m * mat1_strideM,
+                  mat2 + n * K,
+                  out + m * out_strideM + n,
+                  Ctmp,
+                  bias + n,
+                  m_size,
+                  n_size,
+                  K,
+                  mat1_strideM,
+                  n_size,
+                  out_strideM,
+                  /* brg */ false);
+            }
+          }
+        }
+      }
+    }
+
+    if (use_brgemm) {
+      at::native::cpublas::brgemm_release();
+    }
+  });
+}
+
 template <typename scalar_t>
 void weight_packed_linear_kernel_impl(
     scalar_t* __restrict__ out,
@@ -465,44 +604,9 @@ void weight_packed_linear_kernel_impl(
     int64_t K,
     int64_t mat1_strideM,
     int64_t out_strideM) {
-  constexpr int64_t BLOCK_M = block_size_m();
-  constexpr int64_t BLOCK_N = block_size_n();
-  const int64_t MB = div_up(M, BLOCK_M);
-  const int64_t NB = div_up(N, BLOCK_N);
-
-  const bool use_brgemm = can_use_brgemm<scalar_t>(M);
-
-  // parallel on [MB, NB]
   AT_DISPATCH_BOOL(bias != nullptr, has_bias, [&] {
-    parallel_2d(MB, NB, [&](int64_t mb0, int64_t mb1, int64_t nb0, int64_t nb1) {
-      // for brgemm, use float32 for accumulate
-      alignas(64) float Ctmp[BLOCK_M * BLOCK_N];
-
-      loop_2d<scalar_t>(mb0, mb1, nb0, nb1, BLOCK_N * K, [&](int64_t mb, int64_t nb, int64_t nb_offset) {
-        int64_t mb_start = mb * BLOCK_M;
-        int64_t mb_size = std::min(M - mb_start, BLOCK_M);
-        int64_t nb_start = nb * BLOCK_N;
-        int64_t nb_size = std::min(N - nb_start, BLOCK_N);
-
-        tinygemm_kernel<scalar_t, has_bias>(
-            /*   A */ mat1 + mb_start * mat1_strideM,
-            /*   B */ mat2 + nb_start * K /* nb * BLOCK_N * K */,
-            /*   C */ out + mb_start * out_strideM + nb_start,
-            /* Ctmp*/ Ctmp,
-            /* bias*/ bias + nb_start,
-            /*   M */ mb_size,
-            /*   N */ nb_size,
-            /*   K */ K,
-            /* lda */ mat1_strideM,
-            /* ldb */ nb_size,
-            /* ldc */ out_strideM,
-            /* brg */ use_brgemm);
-      });
-
-      if (use_brgemm) {
-        at::native::cpublas::brgemm_release();
-      }
-    });
+    weight_packed_linear_blocked<scalar_t, has_bias>(
+        out, mat1, mat2, bias, M, N, K, mat1_strideM, out_strideM);
   });
 }
 
@@ -518,65 +622,67 @@ void weight_packed_linear_kernel_impl(
     int64_t K,
     int64_t mat1_strideM,
     int64_t out_strideM) {
-  constexpr int64_t BLOCK_M = block_size_m();
-  constexpr int64_t BLOCK_N = block_size_n();
-  const int64_t MB = div_up(M, BLOCK_M);
-  const int64_t NB = div_up(N, BLOCK_N);
+  constexpr int64_t TILE_M = block_size_m();
+  constexpr int64_t TILE_N = block_size_n();
 
-  const bool use_brgemm = true;  // TODO: add intrinsic path
-  // parallel on [MB, NB]
+  const gemm_blocking_params params = compute_gemm_blocking(M, N, K, sizeof(scalar_t));
+  const int64_t MC = div_up(M, params.m_par);
+  const int64_t NC = div_up(N, params.n_par);
+
+  alignas(64) float Atmp[TILE_M * gemm_max_k_blk()];
+
   AT_DISPATCH_BOOL(bias != nullptr, has_bias, [&] {
-    parallel_2d(MB, NB, [&](int64_t mb0, int64_t mb1, int64_t nb0, int64_t nb1) {
-      // for brgemm, use float32 for accumulate
-      alignas(64) float Atmp[BLOCK_M * K];
-      alignas(64) float Ctmp[BLOCK_M * BLOCK_N];
+    parallel_2d(MC, NC, [&](int64_t mc0, int64_t mc1, int64_t nc0, int64_t nc1) {
+      alignas(64) float Ctmp[TILE_M * TILE_N];
 
-      loop_2d<float>(mb0, mb1, nb0, nb1, BLOCK_N * K, [&](int64_t mb, int64_t nb, int64_t nb_offset) {
-        int64_t mb_start = mb * BLOCK_M;
-        int64_t mb_size = std::min(M - mb_start, BLOCK_M);
-        int64_t nb_start = nb * BLOCK_N;
-        int64_t nb_size = std::min(N - nb_start, BLOCK_N);
-        for (int64_t m = 0; m < mb_size; ++m) {
-          copy_stub<scalar_t>(Atmp + m * K, mat1 + mb_start * mat1_strideM + m * K, K);
-        }
-        tinygemm_kernel<scalar_t, has_bias>(
-            /*   A */ Atmp,
-            /*   B */ mat2 + nb_start * K /* nb * BLOCK_N * K */,
-            /*   C */ out + mb_start * out_strideM + nb_start,
-            /* Ctmp*/ Ctmp,
-            /* bias*/ bias + nb_start,
-            /*   M */ mb_size,
-            /*   N */ nb_size,
-            /*   K */ K,
-            /* lda */ mat1_strideM,
-            /* ldb */ nb_size,
-            /* ldc */ out_strideM,
-            /* brg */ use_brgemm);
+      for (int64_t mc = mc0; mc < mc1; ++mc) {
+        const int64_t m_par_start = mc * params.m_par;
+        const int64_t m_par_end = std::min(M, m_par_start + params.m_par);
 
-        if (post_mul_mat != nullptr) {
-          for (int64_t m = 0; m < mb_size; ++m) {
-            scalar_sigmoid_and_mul<scalar_t, has_bias>(
-                out + mb_start * out_strideM + nb_start + m * out_strideM,
-                Ctmp + m * BLOCK_N,
-                bias + nb_start,
-                post_mul_mat + mb_start * out_strideM + m * out_strideM,
-                out_strideM);
-          }
-        } else {
-          for (int64_t m = 0; m < mb_size; ++m) {
-            if constexpr (has_bias) {
-              copy_add_stub(
-                  out + mb_start * out_strideM + nb_start + m * out_strideM, Ctmp + m * BLOCK_N, bias + nb_start, N);
-            } else {
-              copy_stub(out + mb_start * out_strideM + nb_start + m * out_strideM, Ctmp + m * BLOCK_N, N);
+        for (int64_t nc = nc0; nc < nc1; ++nc) {
+          const int64_t n_par_start = nc * params.n_par;
+          const int64_t n_par_end = std::min(N, n_par_start + params.n_par);
+
+          for (int64_t k0 = 0; k0 < K; k0 += params.k_blk) {
+            const int64_t k_size = std::min(params.k_blk, K - k0);
+            const bool first_k = (k0 == 0);
+            const bool last_k = (k0 + k_size >= K);
+
+            for (int64_t n = n_par_start; n < n_par_end; n += TILE_N) {
+              const int64_t n_size = std::min(TILE_N, n_par_end - n);
+
+              for (int64_t m = m_par_start; m < m_par_end; m += TILE_M) {
+                const int64_t m_size = std::min(TILE_M, m_par_end - m);
+
+                for (int64_t mm = 0; mm < m_size; ++mm) {
+                  copy_stub<scalar_t>(Atmp + mm * k_size, mat1 + (m + mm) * mat1_strideM + k0, k_size);
+                }
+
+                brgemm<scalar_t, has_bias>::compute(
+                    Atmp, mat2 + n * K + k0, Ctmp, m_size, n_size, k_size, k_size, n_size, !first_k);
+
+                if (last_k) {
+                  if (post_mul_mat != nullptr) {
+                    for (int64_t mm = 0; mm < m_size; ++mm) {
+                      scalar_sigmoid_and_mul<scalar_t, has_bias>(
+                          out + (m + mm) * out_strideM + n,
+                          Ctmp + mm * TILE_N,
+                          bias + n,
+                          post_mul_mat + (m + mm) * out_strideM + n,
+                          n_size);
+                    }
+                  } else {
+                    brgemm<scalar_t, has_bias>::store(
+                        out + m * out_strideM + n, Ctmp, bias + n, m_size, n_size, out_strideM);
+                  }
+                }
+              }
             }
           }
         }
-      });
-
-      if (use_brgemm) {
-        at::native::cpublas::brgemm_release();
       }
+
+      at::native::cpublas::brgemm_release();
     });
   });
 }
