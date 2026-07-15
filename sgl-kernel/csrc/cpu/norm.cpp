@@ -139,11 +139,7 @@ struct NormTraits<NormMode::RMSNormGated> : NormTraitsBase {
   }
 #if defined(CPU_CAPABILITY_AVX512)
   static inline __m512 apply_gate(__m512 x, __m512 gate) {
-    __m512 minus_gate = _mm512_xor_ps(_mm512_set1_ps(-0.f), gate);
-    __m512 denom = _mm512_add_ps(_mm512_exp_u20_ps(minus_gate), _mm512_set1_ps(1.0f));
-    // NOTE: avoid vdivps -> use reciprocal
-    __m512 sigmoid = _mm512_mul_ps(gate, _mm512_rcp14_ps(denom));
-    return _mm512_mul_ps(x, sigmoid);
+    return _mm512_mul_ps(x, _mm512_mul_ps(gate, _mm512_rcp14_sigmoid_ps(gate)));
   }
 #endif
 };

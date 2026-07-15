@@ -557,6 +557,35 @@ inline __attribute__((always_inline)) __m512 _mm512_fexp_u20_ps(const __m512 val
   // final interpretation to float
   return _mm512_castsi512_ps(casted_integer);
 }
+
+// sigmoid(x) = 1 / (1 + exp(-x)); avoid vdivps via rcp14
+inline __attribute__((always_inline)) __m512 _mm512_rcp14_sigmoid_ps(__m512 x) {
+  __m512 minus_x = _mm512_xor_ps(_mm512_set1_ps(-0.f), x);
+  __m512 denom = _mm512_add_ps(_mm512_exp_u20_ps(minus_x), _mm512_set1_ps(1.f));
+  return _mm512_rcp14_ps(denom);
+}
+
+// SiLU(x) = x * sigmoid(x)
+inline __attribute__((always_inline)) __m512 _mm512_rcp14_silu_ps(__m512 x) {
+  return _mm512_mul_ps(x, _mm512_rcp14_sigmoid_ps(x));
+}
 #endif
+
+inline at::vec::Vectorized<float> fast_sigmoid(const at::vec::Vectorized<float>& x) {
+#if defined(CPU_CAPABILITY_AVX512)
+  return at::vec::Vectorized<float>(_mm512_rcp14_sigmoid_ps(x));
+#else
+  const auto one = at::vec::Vectorized<float>(1.f);
+  return one / (one + x.neg().exp_u20());
+#endif
+}
+
+inline at::vec::Vectorized<float> fast_silu(const at::vec::Vectorized<float>& x) {
+#if defined(CPU_CAPABILITY_AVX512)
+  return at::vec::Vectorized<float>(_mm512_rcp14_silu_ps(x));
+#else
+  return x * fast_sigmoid(x);
+#endif
+}
 
 }  // anonymous namespace
