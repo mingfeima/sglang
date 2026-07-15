@@ -132,8 +132,6 @@ inline void silu_and_mul(
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
 
-  const fVec one = fVec(1.f);
-
   // no remainder
   for (int64_t m = 0; m < m_size; ++m) {
     scalar_t* __restrict__ out = output + m * N;
@@ -145,12 +143,8 @@ inline void silu_and_mul(
       fVec x1 = fVec::loadu(x + d + fVec::size());
       fVec y0 = fVec::loadu(y + d);
       fVec y1 = fVec::loadu(y + d + fVec::size());
-      // silu
-      x0 = x0 / (one + x0.neg().exp_u20());
-      x1 = x1 / (one + x1.neg().exp_u20());
-      // mul
-      x0 = x0 * y0;
-      x1 = x1 * y1;
+      x0 = fast_silu(x0) * y0;
+      x1 = fast_silu(x1) * y1;
       // convert
       bVec out_vec = convert_from_float_ext<scalar_t>(x0, x1);
       out_vec.store(out + d);
@@ -170,39 +164,30 @@ inline void clamp_sigmoid_and_mul(
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
 
-  const fVec one = fVec(1.f);
-  const fVec zero = fVec(0.f);
   const fVec limit_v = fVec(limit);
   const fVec nlimit_v = fVec(-limit);
   const fVec alpha_v = fVec(alpha);
+  const fVec one = fVec(1.f);
 
   // no remainder
   for (int64_t m = 0; m < m_size; ++m) {
     scalar_t* __restrict__ out = output + m * N;
     const float* __restrict__ cur_ptr = input0 + m * BLOCK_N;
     for (int64_t d = 0; d < BLOCK_N; d += bVec::size()) {
-      float tmp_glu0[fVec::size()];     // 16
-      float tmp_linear0[fVec::size()];  // 16
+      float tmp_glu0[fVec::size()];
+      float tmp_linear0[fVec::size()];
 
-      // interleaved: x[2i] = glu, x[2i+1] = linear
+#pragma GCC unroll 4
       for (int j = 0; j < fVec::size(); ++j) {
-        // x0 [0,2,..30]
         tmp_glu0[j] = cur_ptr[d + j * 2];
-        // y0 [1,3,...31]
         tmp_linear0[j] = cur_ptr[d + j * 2 + 1];
       }
       fVec x0 = fVec::loadu(tmp_glu0);
       fVec y0 = fVec::loadu(tmp_linear0);
 
-      // clamp
       x0 = at::vec::minimum(x0, limit_v);
       y0 = at::vec::minimum(limit_v, at::vec::maximum(nlimit_v, y0));
-      // x * sigmoid(x * alpha)
-      x0 = x0 / (one + (x0 * alpha_v).neg().exp_u20());
-      // (y + 1) * x
-      y0 = y0 + one;
-      x0 = x0 * y0;
-      // // convert
+      x0 = fast_sigmoid_glu(x0, alpha_v) * (y0 + one);
       convert_from_float_and_store<scalar_t>(out + d / 2 + offset, x0);
     }
   }
@@ -285,22 +270,17 @@ struct tinygemm_kernel_nn2<at::BFloat16, BLOCK_M, BLOCK_N> {
     }
 
     using Vec = at::vec::Vectorized<float>;
-    const Vec one = Vec(1.f);
     auto storec = [&](auto i) {
       constexpr int row = i / COLS;
       constexpr int col = i % COLS;
       // for COLS = 2, 4 use 512bit store
       if constexpr (col % 2 == 0) {
-        Vec x0 = vc0[row * COLS + col + 0];
-        Vec x1 = vc0[row * COLS + col + 1];
-        Vec y0 = vc1[row * COLS + col + 0];
-        Vec y1 = vc1[row * COLS + col + 1];
-        // silu
-        x0 = x0 / (one + x0.neg().exp_u20());
-        x1 = x1 / (one + x1.neg().exp_u20());
-        // mul
-        x0 = x0 * y0;
-        x1 = x1 * y1;
+        __m512 x0 = vc0[row * COLS + col + 0];
+        __m512 x1 = vc0[row * COLS + col + 1];
+        __m512 y0 = vc1[row * COLS + col + 0];
+        __m512 y1 = vc1[row * COLS + col + 1];
+        x0 = _mm512_mul_ps(_mm512_rcp14_silu_ps(x0), y0);
+        x1 = _mm512_mul_ps(_mm512_rcp14_silu_ps(x1), y1);
 
         _mm512_storeu_si512(
             reinterpret_cast<__m512i*>((C + row * ldc + col * 16)),

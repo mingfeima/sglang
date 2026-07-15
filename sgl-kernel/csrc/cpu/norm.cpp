@@ -134,8 +134,7 @@ struct NormTraits<NormMode::RMSNormGated> : NormTraitsBase {
     return x * (gate / (1.f + std::exp(-gate)));
   }
   static inline at::vec::Vectorized<float> apply_gate(at::vec::Vectorized<float> x, at::vec::Vectorized<float> gate) {
-    const auto one = at::vec::Vectorized<float>(1.f);
-    return x * (gate / (one + gate.neg().exp_u20()));
+    return x * gate * fast_sigmoid(gate);
   }
 #if defined(CPU_CAPABILITY_AVX512)
   static inline __m512 apply_gate(__m512 x, __m512 gate) {

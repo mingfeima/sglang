@@ -1282,8 +1282,8 @@ void fused_gdn_gating_kernel_impl(
 
         fVec g0 = neg_one * A_log_vec0.exp_u20() * softplus(a0 + dt_bias_vec0);
         fVec g1 = neg_one * A_log_vec1.exp_u20() * softplus(a1 + dt_bias_vec1);
-        fVec beta0 = one / (one + (neg_one * b0).exp_u20());
-        fVec beta1 = one / (one + (neg_one * b1).exp_u20());
+        fVec beta0 = fast_sigmoid(neg_one * b0);
+        fVec beta1 = fast_sigmoid(neg_one * b1);
 
         g0.store(out + i * num_heads + j);
         g1.store(out + i * num_heads + j + fvec_size);
@@ -1331,8 +1331,8 @@ void fused_gdn_gating_kernel_impl(
 
         fVec g0 = neg_one * A_log_vec0.exp_u20() * softplus(a0 + dt_bias_vec0);
         fVec g1 = neg_one * A_log_vec1.exp_u20() * softplus(a1 + dt_bias_vec1);
-        fVec beta0 = one / (one + (neg_one * b0).exp_u20());
-        fVec beta1 = one / (one + (neg_one * b1).exp_u20());
+        fVec beta0 = fast_sigmoid(neg_one * b0);
+        fVec beta1 = fast_sigmoid(neg_one * b1);
 
         g0.store(out + i * num_heads + j);
         g1.store(out + i * num_heads + j + fvec_size);

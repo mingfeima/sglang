@@ -569,6 +569,26 @@ inline __attribute__((always_inline)) __m512 _mm512_rcp14_sigmoid_ps(__m512 x) {
 inline __attribute__((always_inline)) __m512 _mm512_rcp14_silu_ps(__m512 x) {
   return _mm512_mul_ps(x, _mm512_rcp14_sigmoid_ps(x));
 }
+
+// x * sigmoid(x * alpha) for clamped SwiGLU
+inline __attribute__((always_inline)) __m512 _mm512_rcp14_sigmoid_glu_ps(__m512 x, __m512 alpha) {
+  __m512 xa = _mm512_mul_ps(x, alpha);
+  return _mm512_mul_ps(x, _mm512_rcp14_sigmoid_ps(xa));
+}
+
+// deinterleave [a0,b0,a1,b1,...] into even (a*) and odd (b*)
+inline void _mm512_deinterleave_ps(__m512 v, __m512& even, __m512& odd) {
+  __m256 lo = _mm512_castps512_ps256(v);
+  __m256 hi = _mm512_extractf32x8_ps(v, 1);
+  __m256 t0 = _mm256_shuffle_ps(lo, lo, _MM_SHUFFLE(2, 3, 0, 1));
+  __m256 t1 = _mm256_shuffle_ps(hi, hi, _MM_SHUFFLE(2, 3, 0, 1));
+  __m256 g0 = _mm256_shuffle_ps(lo, t0, _MM_SHUFFLE(2, 0, 2, 0));
+  __m256 l0 = _mm256_shuffle_ps(t0, lo, _MM_SHUFFLE(3, 1, 3, 1));
+  __m256 g1 = _mm256_shuffle_ps(hi, t1, _MM_SHUFFLE(2, 0, 2, 0));
+  __m256 l1 = _mm256_shuffle_ps(t1, hi, _MM_SHUFFLE(3, 1, 3, 1));
+  even = _mm512_insertf32x8(_mm512_castps256_ps512(g0), g1, 1);
+  odd = _mm512_insertf32x8(_mm512_castps256_ps512(l0), l1, 1);
+}
 #endif
 
 inline at::vec::Vectorized<float> fast_sigmoid(const at::vec::Vectorized<float>& x) {
@@ -585,6 +605,16 @@ inline at::vec::Vectorized<float> fast_silu(const at::vec::Vectorized<float>& x)
   return at::vec::Vectorized<float>(_mm512_rcp14_silu_ps(x));
 #else
   return x * fast_sigmoid(x);
+#endif
+}
+
+inline at::vec::Vectorized<float> fast_sigmoid_glu(
+    const at::vec::Vectorized<float>& x,
+    const at::vec::Vectorized<float>& alpha) {
+#if defined(CPU_CAPABILITY_AVX512)
+  return at::vec::Vectorized<float>(_mm512_rcp14_sigmoid_glu_ps(x, alpha));
+#else
+  return x * fast_sigmoid(x * alpha);
 #endif
 }
 

@@ -171,7 +171,6 @@ inline void scalar_sigmoid_and_mul(
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
   // scalar sigmoid
-  const fVec one = fVec(1.f);
   fVec X;
   if constexpr (has_bias) {
     assert(bias != nullptr);
@@ -179,7 +178,7 @@ inline void scalar_sigmoid_and_mul(
   } else {
     X = fVec(input[0]);
   }
-  X = one / (one + X.neg().exp_u20());
+  X = fast_sigmoid(X);
 
   // vec mul
   constexpr int kVecSize = bVec::size();
