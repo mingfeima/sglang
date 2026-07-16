@@ -202,8 +202,11 @@ class TestFusedExperts(CustomTestCase):
             torch.randn(E, math.ceil(K / BLOCK_N), math.ceil(N / BLOCK_K))
             * factor_for_scale
         )
-        w1_scaled = scaled_weight(w1, w1s).to(dtype)
-        w2_scaled = scaled_weight(w2, w2s).to(dtype)
+        # Keep float32 dequant weights for the reference. Casting to bf16 here
+        # truncates vs the FP8 kernel's float accumulate and makes bias/swiglu
+        # cases (e.g. m=32, n=k=128) exceed precision[bf16].
+        w1_scaled = scaled_weight(w1, w1s)
+        w2_scaled = scaled_weight(w2, w2s)
         topk_weight, topk_ids = make_routing(M, E, topk, dtype)
 
         packed_w1 = kernel.convert_weight_packed(w1)
@@ -245,7 +248,7 @@ class TestFusedExperts(CustomTestCase):
             )
         else:
             ref = native_fp8_fused_moe(
-                a, w1_scaled.float(), w2_scaled.float(), topk_weight, topk_ids, topk
+                a, w1_scaled, w2_scaled, topk_weight, topk_ids, topk
             )
             out = run_fused_experts(
                 a, packed_w1, packed_w2, topk_weight, topk_ids, **common
