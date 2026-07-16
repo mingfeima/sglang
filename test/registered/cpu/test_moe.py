@@ -352,11 +352,15 @@ class TestFusedExperts(CustomTestCase):
         bf16_w13_weight = torch.stack(bf16_w13_weight).detach()
         bf16_w2_weight = torch.stack(bf16_w2_weight).detach()
 
+        # Ref and kernel must share the same routing: torch_naive_fused_moe
+        # softaxes+topks `score` internally; do not call make_routing here
+        # (that draws a fresh score and breaks the comparison).
         score = torch.rand((M, E), dtype=dtype)
         ref_out = torch_naive_fused_moe(
             a, bf16_w13_weight, bf16_w2_weight, score, topk, False
         )
-        topk_weight, topk_ids = make_routing(M, E, topk, dtype)
+        score = torch.softmax(score, dim=-1, dtype=torch.float32)
+        topk_weight, topk_ids = torch.topk(score, topk)
         awq_w13_weight_pack, awq_w13_zero_pack, awq_w13_scales_pack = (
             torch.ops.sgl_kernel.convert_weight_packed_scale_zp(
                 awq_w13_weight, awq_w13_zero, awq_w13_scales, 0
