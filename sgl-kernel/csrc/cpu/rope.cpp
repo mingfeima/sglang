@@ -385,14 +385,18 @@ std::tuple<at::Tensor, at::Tensor> multimodal_rotary_embedding_cpu(
   TORCH_CHECK(positions.dim() == 1 || positions.dim() == 2, "positions must be a 1D or 2D tensor");
   CHECK_EQ(positions.scalar_type(), at::kLong);
   CHECK_DIM(2, query);
-
-  const auto input_dtype = query.scalar_type();
-  int64_t rotary_dim = cos_sin_cache.size(1);
-  int64_t num_tokens = positions.size(-1);
-
   CHECK_LAST_DIM_CONTIGUOUS_INPUT(query);
-  CHECK_INPUT_SHAPE_DTYPE<true>(key, {num_tokens, query.size(1), head_size}, input_dtype);
-  CHECK_INPUT_SHAPE_DTYPE<false>(cos_sin_cache, {cos_sin_cache.size(0), rotary_dim}, input_dtype);
+  const auto input_dtype = query.scalar_type();
+  const int64_t num_tokens = positions.size(-1);
+  CHECK_EQ(query.size(0), num_tokens);
+  CHECK_DIM(2, key);
+  CHECK_EQ(key.size(0), num_tokens);
+  CHECK_EQ(key.scalar_type(), input_dtype);
+  CHECK_LAST_DIM_CONTIGUOUS_INPUT(key);
+  CHECK_DIM(2, cos_sin_cache);
+  const int64_t rotary_dim = cos_sin_cache.size(1);
+  CHECK_EQ(cos_sin_cache.scalar_type(), input_dtype);
+  CHECK_INPUT(cos_sin_cache);
 
   const RopeParams p{query, key, head_size, rotary_dim};
   TORCH_CHECK(p.rotary_dim <= p.head_size, "rotary_dim must be <= head_size");
