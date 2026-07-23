@@ -952,6 +952,7 @@
               "docs/hardware-platforms/mthreads_gpu",
               "docs/hardware-platforms/tpu",
               "docs/hardware-platforms/xpu",
+              "docs/hardware-platforms/xpu-ultraep-task-list",
               "docs/hardware-platforms/plugin"
             ]
           }
