@@ -1,0 +1,195 @@
+---
+title: UltraEP on Intel XPU — Implementation Task List
+sidebarTitle: UltraEP XPU Tasks
+description: Phased engineering task list for bringing UltraEP-style real-time MoE expert load balancing to Intel XPU in SGLang.
+---
+
+# UltraEP on Intel XPU — Implementation Task List
+
+This document tracks the work to implement **UltraEP-style exact-load, real-time expert load balancing** for MoE serving (prefill-first) on **Intel XPU**, integrated into SGLang.
+
+**References**
+
+- UltraEP paper: [arXiv:2606.04101](https://arxiv.org/abs/2606.04101)
+- Existing SGLang pieces: `python/sglang/srt/eplb/`, `python/sglang/srt/layers/moe/token_dispatcher/`, XPU communicator
+- Intel primitives: XeLink, SYCL peer access, Intel SHMEM, oneCCL, XPU Triton / oneDNN MoE kernels
+
+**Non-goals (initial phases)**
+
+- Full training / backward / gradient reduction path (serving prefill first)
+- Decode-path UltraEP (compute imbalance is diluted; keep off by default)
+- Claiming NVIDIA DeepEP / NVSHMEM parity without an XPU A2A backend
+
+---
+
+## Phase 0 — Prerequisites and Scope
+
+- [ ] Confirm target hardware: multi-GPU nodes (or rack fabric) with **XeLink** (or equivalent high-bandwidth scale-up); document unsupported topologies (e.g. weak multi-Arc without scale-up)
+- [ ] Measure baseline scale-up vs scale-out bandwidth and P2P latency on the target cluster
+- [ ] Decide EP group placement policy: keep each EP group inside one scale-up domain; use DP/PP across domains
+- [ ] Inventory current XPU MoE support in SGLang (runner, top-k, fused MoE, TP-only communicator gaps)
+- [ ] Write a short design note: UltraEP control plane vs data plane vs token A2A ownership on XPU
+- [ ] Define success metrics: inter-rank imbalance, prefill tokens/s, planning+replication overhead (ms/layer), memory for `N_slot` redundant experts
+
+---
+
+## Phase 1 — XPU MoE Expert Parallelism Foundation (blocker for UltraEP)
+
+UltraEP assumes a working token dispatch/combine path. Build that first.
+
+### 1.1 MoE A2A backend for XPU
+
+- [ ] Add an XPU MoE A2A backend option (e.g. `xpu` / `oneccl`) to `MoeA2ABackend` and server args
+- [ ] Implement `token_dispatcher` for XPU (mirror `standard.py` / `deepep.py` interfaces: dispatch + combine)
+- [ ] Prefill path: irregular all-to-all (`all_to_all_single` / oneCCL `alltoallv`) with correct send/recv sizes from routing metadata
+- [ ] Decode path: functional A2A first; low-latency specialization later (optional)
+- [ ] Wire EP size (`--ep`) with TP/DP attention combinations supported on XPU
+- [ ] Unit / multi-GPU tests: routing correctness, combine sum, empty experts, skewed load
+
+### 1.2 Expert compute on XPU
+
+- [ ] Ensure grouped / batched expert GEMM path works on XPU (Triton-XPU, oneDNN, or ESIMD kernels)
+- [ ] Validate dtype / quant paths needed for target models (BF16 first; FP8 later if required)
+- [ ] Benchmark expert GEMM vs A2A time to know when load imbalance dominates
+
+### 1.3 Baseline balancer (optional but recommended)
+
+- [ ] Port or enable **EPLB** (history-based periodic redundant-expert placement) on XPU as a correctness and perf baseline
+- [ ] Reuse `ExpertLocationMetadata` / dispatch remapping hooks where possible
+- [ ] Record expert-load traces for later UltraEP planner replay tests
+
+**Exit criteria:** MoE EP serving on XPU is correct; imbalance and throughput are measurable without UltraEP.
+
+---
+
+## Phase 2 — UltraEP Control Plane (portable planner)
+
+Hardware-agnostic logic; can develop against CUDA replay traces or synthetic loads before XPU comm is fast.
+
+### 2.1 Exact-load collection
+
+- [ ] After gating, gather global load matrix Λ (tokens from source rank → logical expert) on-device
+- [ ] Reuse notify-dispatch / routing metadata exchange where possible; avoid host round-trips
+- [ ] Ensure every rank can form the same Λ without extra host sync
+
+### 2.2 Quota-driven planner
+
+- [ ] Implement threshold binary-search planner jointly solving replication + token reroute quotas
+- [ ] Enforce constraints: per-rank redundant slots `N_slot`, min useful replica quota `u_min`, target balance coefficient β
+- [ ] Prefer locality when splitting quotas across physical instances
+- [ ] Materialize replica only when quota is useful (no blind hot-expert clone)
+- [ ] Emit deterministic plan on every rank: slot assignment `X`, quotas `U`, reroute table `Q`
+- [ ] Device-side (SYCL / Triton-XPU) or host prototype with clear migration path to device
+
+### 2.3 Reroute and logical→physical mapping
+
+- [ ] Convert router `topk_ids` (logical experts) to physical expert instances using `Q`
+- [ ] Preserve logical routing semantics (same experts; different physical replicas only)
+- [ ] Hook into SGLang MoE forward **before** token dispatch
+
+### 2.4 Memory layout
+
+- [ ] Fixed main + redundant expert slots per rank (replication-only; no main-expert reordering)
+- [ ] Cross-layer reuse of redundant weight buffers (no optimizer state for replicas)
+- [ ] Exclude redundant experts from checkpoints / parameter buckets
+- [ ] Lazy registration of main-expert weight pointers with the UltraEP runtime
+
+**Exit criteria:** Planner unit tests achieve near-ideal post-reroute imbalance on recorded / synthetic loads; SGLang can apply remapping with stub (slow) weight copy.
+
+---
+
+## Phase 3 — XPU Data Plane (RSN-native communication equivalent)
+
+Map UltraEP’s peer-memory expert replication onto Intel scale-up.
+
+### 3.1 Transport choice
+
+- [ ] Prototype A: SYCL `ext_oneapi_peer_access` + USM device allocations for intra-node XeLink
+- [ ] Prototype B: **Intel SHMEM** symmetric heap with device-initiated put/get (preferred for production-like PGAS)
+- [ ] Select transport based on bandwidth, overlap with compute, and multi-node scale-up support
+- [ ] Build device-resident peer address tables at init
+
+### 3.2 Persistent tile streaming
+
+- [ ] Allocate symmetric buffers for redundant weights + readiness flags
+- [ ] Implement tile/chunk streaming kernels that copy expert weights into remote redundant slots
+- [ ] Overlap weight distribution with planning / reroute where bandwidth contention allows
+- [ ] Gate token dispatch on weight materialization completion for required replicas
+
+### 3.3 Relay-based fan-out
+
+- [ ] Detect hot experts whose replica count exceeds relay threshold
+- [ ] Build two-stage chunk-streaming relay trees; load-aware relay selection
+- [ ] Pipeline stage-I → stage-II without full-expert barriers
+- [ ] Ablate vs no-relay; compare vs oneCCL / torch distributed send/recv baselines
+
+### 3.4 Serving integration details
+
+- [ ] Prefill-only enablement flag (e.g. `--enable-ultraep` + phase gating)
+- [ ] Compatibility with XPU graph / `torch.compile` capture (device-only ops; no host sync on hot path)
+- [ ] Error handling: insufficient slots, P2P unavailable, plan timeout → safe fallback (no UltraEP / EPLB)
+
+**Exit criteria:** Expert weight replication on XeLink is faster than naive collectives; hot-path overhead does not erase balancing gains on target EP sizes.
+
+---
+
+## Phase 4 — SGLang End-to-End Integration
+
+- [ ] Standalone UltraEP runtime module (decoupled from A2A backend), ~thin Python + native kernels
+- [ ] Glue in MoE forward: `gating → plan → materialize → reroute → dispatch → GEMM → combine`
+- [ ] Server args / env: enable flag, `N_slot`, β, `u_min`, relay threshold, transport backend
+- [ ] Metrics / logging: pre/post imbalance, plan time, copy time, fallback rate
+- [ ] Docs: XPU UltraEP enablement, hardware prerequisites, known limits
+- [ ] CI: multi-XPU correctness tests; optional perf smoke on XeLink machines
+
+**Exit criteria:** Launch command serves a MoE model on XPU with UltraEP prefill balancing; docs and flags are usable.
+
+---
+
+## Phase 5 — Evaluation and Hardening
+
+- [ ] Models: start with smaller MoE (e.g. Qwen-MoE class), then larger EP configs as hardware allows
+- [ ] Compare: no balancing / EPLB / UltraEP (and planner-only vs full XPU data plane)
+- [ ] Report: throughput vs ideal force-balanced upper bound; imbalance ratio; overhead breakdown
+- [ ] Stress: mixed-domain traffic, sudden domain shifts, slot pressure, EP scaling
+- [ ] Failure modes: peer access loss, stragglers, OOM from redundant slots
+- [ ] Decide decode policy: keep disabled or limited heuristic
+
+**Exit criteria:** Documented numbers on target XPU cluster; clear go/no-go for production enablement.
+
+---
+
+## Phase 6 — Stretch / Later
+
+- [ ] Training path: backward weight re-materialization + replica gradient reduction to main experts
+- [ ] Multi-RSN / multi-node UltraEP if Intel fabric provides rack-scale scale-up
+- [ ] Co-design with a high-performance XPU DeepEP-equivalent (low-latency decode A2A)
+- [ ] Quantized expert replication (FP8 weights + scales) end-to-end
+- [ ] Dynamic `N_slot` / memory-aware admission
+
+---
+
+## Suggested Work Order (summary)
+
+| Order | Workstream | Depends on |
+| --- | --- | --- |
+| 1 | Phase 0 scope + hardware gates | — |
+| 2 | Phase 1 XPU MoE A2A + expert GEMM | Phase 0 |
+| 3 | Phase 2 planner + remapping (stub copy OK) | Phase 1 interfaces |
+| 4 | Phase 3 XeLink / Intel SHMEM replication | Phase 2 + XeLink hardware |
+| 5 | Phase 4 SGLang flags, metrics, docs, CI | Phases 2–3 |
+| 6 | Phase 5 evaluation | Phase 4 |
+| 7 | Phase 6 stretch | Stable serving path |
+
+---
+
+## Ownership Checklist (fill in)
+
+| Area | Owner | Notes |
+| --- | --- | --- |
+| XPU MoE A2A dispatcher | | |
+| Expert GEMM / kernels | | |
+| UltraEP planner | | |
+| Intel SHMEM / SYCL transport | | |
+| SGLang integration + flags | | |
+| Benchmarks + docs | | |
