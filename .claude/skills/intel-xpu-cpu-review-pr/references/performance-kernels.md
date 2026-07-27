@@ -15,6 +15,9 @@ path.
 Never assume an sglang Python PR alone ships XPU kernels. Never put XPU kernels
 into `sgl-kernel/csrc/cpu/`.
 
+PRs **inside** sgl-kernel-xpu use the lighter review:
+[sgl-kernel-xpu-review.md](sgl-kernel-xpu-review.md) (perf, simplify, FA/FlashInfer).
+
 ## What to look for in a PR
 
 ### Claims vs reality

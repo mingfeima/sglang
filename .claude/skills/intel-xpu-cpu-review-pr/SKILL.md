@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: Review SGLang PRs for Intel XPU/CPU ownership. Three pillars: (1) must not break other CI especially CUDA, (2) enabling aligned with CUDA/HIP extension points, (3) perf impact with kernels in sgl-kernel/csrc/cpu or out-of-tree sgl-kernel-xpu. Chinese analysis for the reviewer; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number>.
+description: Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership. For sglang: three pillars (other CI, enabling parity, perf/kernels). For sgl-kernel-xpu: lighter focus — performance, simplify logic, and FlashAttention/FlashInfer algorithm parity (parallel dims, tiling, math). Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu].
 ---
 
 # Intel XPU / CPU PR Review
@@ -27,18 +27,30 @@ Path map: [platform-map.md](references/platform-map.md).
 CI attribution: [ci-failure-attribution.md](references/ci-failure-attribution.md).
 Enabling parity: [enabling-parity.md](references/enabling-parity.md).
 Perf / kernels: [performance-kernels.md](references/performance-kernels.md).
+**sgl-kernel-xpu-only PRs**: [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md).
 
 
 ## Usage
 
 ```
 /intel-xpu-cpu-review-pr <PR number>
+/intel-xpu-cpu-review-pr <PR number> --repo sgl-kernel-xpu
+/intel-xpu-cpu-review-pr https://github.com/sgl-project/sgl-kernel-xpu/pull/<N>
 ```
 
-Optional: `/intel-xpu-cpu-review-pr <PR number> --focus xpu|cpu|both` (default `both`).
+Optional: `--focus xpu|cpu|both` (default `both`) for **sglang** tree PRs.
 
-When the user asks whether a red check is caused by the PR, run §14 (and the
-attribution reference) even if the code review is otherwise light.
+### Which playbook?
+
+| PR location | Playbook |
+|---|---|
+| `sgl-project/sglang` (default) | Full Intel checklist below (three pillars) |
+| `sgl-project/sgl-kernel-xpu` | **Lighter** — only perf, simplify, FA/FlashInfer algorithm parity. See [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md). Skip §0–§14 unless the op ABI breaks sglang. |
+
+Detect automatically from the PR URL / `--repo`. If unclear, ask once.
+
+When the user asks whether a red check is caused by the PR (sglang tree), run §14
+even if the code review is otherwise light.
 
 ## Language (required)
 
@@ -87,6 +99,15 @@ under `sgl-kernel/csrc/gpu/**` with no Python dispatch changes, or docs-only unr
 to hardware platforms). Still skim for top-level CUDA-only imports in shared modules.
 
 ## Steps
+
+### A. sgl-kernel-xpu repo (light)
+
+1. `gh pr view/diff <N> --repo sgl-project/sgl-kernel-xpu`
+2. Follow **only** [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md):
+   **性能 → 能否化简 →（若与 attention 相关）FA/FlashInfer 并行维·tile·数学等价**
+3. 中文短报告 + 英文 comment 草稿。不要套用下面的 sglang 全量 checklist。
+
+### B. sglang repo (full)
 
 1. `gh pr view <N> --repo sgl-project/sglang --json title,body,files,author,baseRefName,headRefName,labels,commits,reviews,statusCheckRollup`
 2. `gh pr diff <N> --repo sgl-project/sglang`
@@ -367,7 +388,11 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 
 ### A. 给 reviewer 的中文报告（主输出）
 
-先用几句话说明 **这个 PR 在做什么**，再按三大支柱给结论：
+**若 `--repo sgl-kernel-xpu`：** 只写短文 —— PR 做什么；性能；能否化简；
+（attention 类）与 FlashAttention/FlashInfer 在并行维 / tile / 数学上是否等价；总评。
+不要展开 sglang 三大支柱全文。
+
+**若 sglang 树：** 先用几句话说明 PR 在做什么，再按三大支柱给结论：
 
 1. **其他 CI（支柱 1）**: `PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`
 2. **与其他 device 接入对齐（支柱 2）**: 对齐 / 有意分歧 / 缺失（enabling 必填）
@@ -405,6 +430,17 @@ fix or gate the shared path before we continue the Intel-side review.
 <summary>suggested comment</summary>
 
 Intel XPU/CPU review: …
+
+</details>
+
+**[kernel-xpu — math / tiling]** …
+<details>
+<summary>suggested comment</summary>
+
+For this attention kernel, please call out how the parallel dimensions and
+Q/KV tiles compare to FlashAttention / FlashInfer (Br/Bc, online softmax
+schedule). If the math (rescale / LSE / mask / dtype accumulate) intentionally
+differs, document it; silent divergence from FA/FlashInfer is a blocker.
 
 </details>
 
