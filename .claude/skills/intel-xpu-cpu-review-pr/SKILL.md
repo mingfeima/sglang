@@ -45,7 +45,7 @@ Optional: `--focus xpu|cpu|both` (default `both`) for **sglang** tree PRs.
 | PR location | Playbook |
 |---|---|
 | `sgl-project/sglang` (default) | Full Intel checklist below (three pillars) |
-| `sgl-project/sgl-kernel-xpu` | **Lighter** — only perf, simplify, FA/FlashInfer algorithm parity. See [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md). Skip §0–§14 unless the op ABI breaks sglang. |
+| `sgl-project/sgl-kernel-xpu` | **Lighter** — perf (**benchmark required** for opt PRs), simplify, FA/FlashInfer algorithm parity, **UT must cover the diff**. See [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md). Skip §0–§14 unless the op ABI breaks sglang. |
 
 Detect automatically from the PR URL / `--repo`. If unclear, ask once.
 
@@ -406,13 +406,15 @@ tile / 数学是否等价；**UT 是否覆盖改动（不够则要求补测）**
 3. **性能 / kernel（支柱 3）**:
    - 落点：`sgl-kernel/csrc/cpu` / sgl-kernel-xpu(+pin) / 仅 Python
    - 是否真走到加速路径；有无对 CUDA 热路径的副作用
-   - 证据：数字或「无 perf 宣称」
+   - 优化类：**必须有 benchmark**；否则 🔴
+   - **UT 是否覆盖改动**；不够则同 PR 补测
 4. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
 5. **Intel CI 归因**（Intel 红灯时）: 每 job 标签 + 证据
 6. **分项** ✅ / ⚠️ / 🔴
 7. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
    — 非 Intel **PR-CAUSED** → 不得高于 `REQUEST CHANGES`/`BLOCKED`
-8. 合入证据：先修其他 CI；Intel flake 不强求全绿；有 perf 宣称要有 kernel+数据。
+8. 合入证据：先修其他 CI；Intel flake 不强求全绿；有 perf 宣称要有
+   kernel+benchmark；改动要有 UT 覆盖。
 
 ### B. 给 GitHub 的英文 comment 草稿（需要评论时）
 
