@@ -55,12 +55,13 @@ PRs **inside** sgl-kernel-xpu use the lighter review:
 | Change type | Minimum evidence |
 |---|---|
 | Pure wiring / correctness | State “no perf claim”; OK without bench |
-| New CPU kernel | Before/after or vs PyTorch native on Xeon (or kernel unit bench) |
-| New XPU kernel | Bench on BMG/Arc + kernel-repo PR link + pin |
+| Perf optimization (any platform) | **Required:** before/after benchmark in PR body (hw, shapes, metric). Missing → block |
+| New CPU kernel | Bench on Xeon (or kernel unit bench) + UT covering the op |
+| New XPU kernel | Bench on BMG/Arc + kernel-repo PR link + pin + UT |
 | Default backend / graph change | Latency/throughput note; watch CUDA CI for collateral |
 
-If the PR body claims speedup with no numbers and no kernel diff → ⚠️ or 🔴
-depending on how strong the claim is.
+If the PR body claims speedup with no numbers → 🔴.
+If the diff is not covered by existing tests and UT is not updated → 🔴.
 
 ## Review output hint (中文)
 

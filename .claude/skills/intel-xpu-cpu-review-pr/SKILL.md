@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership. For sglang: three pillars (other CI, enabling parity, perf/kernels). For sgl-kernel-xpu: lighter focus — performance, simplify logic, and FlashAttention/FlashInfer algorithm parity (parallel dims, tiling, math). Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu].
+description: Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership. For sglang: three pillars (other CI, enabling parity, perf/kernels). For sgl-kernel-xpu: perf (benchmarks required for opt PRs), simplify logic, FlashAttention/FlashInfer algorithm parity, and UT coverage updates. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu].
 ---
 
 # Intel XPU / CPU PR Review
@@ -104,7 +104,8 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 
 1. `gh pr view/diff <N> --repo sgl-project/sgl-kernel-xpu`
 2. Follow **only** [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md):
-   **性能 → 能否化简 →（若与 attention 相关）FA/FlashInfer 并行维·tile·数学等价**
+   **性能（优化 PR 必须有 benchmark）→ 能否化简 →（attention）FA/FlashInfer
+   并行维·tile·数学等价 → UT 是否覆盖改动（不够就补）**
 3. 中文短报告 + 英文 comment 草稿。不要套用下面的 sglang 全量 checklist。
 
 ### B. sglang repo (full)
@@ -218,12 +219,15 @@ Full detail: [references/performance-kernels.md](references/performance-kernels.
 Review asks:
 - Perf / “fused” / “AMX” / “XPU kernel” claims → corresponding kernel diff **or**
   linked sgl-kernel-xpu PR + pin bump. Python-only = correctness at best.
+- **Perf optimization PRs must include benchmark results** (hw, shapes, before/after).
+  No numbers → REQUEST CHANGES / BLOCK. “No perf claim” refractors are exempt.
 - Hot path actually hits the kernel (`torch.ops.sgl_kernel` / sgl-kernel-xpu ops),
   not silent `forward_native` / generic PyTorch / wrong attn backend.
 - No extra sync/copy/dtype tax on the Intel branch that CUDA does not pay; no
   global flag flips that hurt CUDA or Intel throughput “by accident”.
-- Evidence: numbers, or explicit “no perf claim”. Strong speedup claims with
-  neither kernel nor bench → ⚠️ / 🔴.
+- **Tests must cover the diff**; if existing UTs cannot, the PR must update/add
+  UTs (sglang: `register_*_ci` / unit tests; sgl-kernel-xpu: in-repo UT).
+  “Tested locally, UT later” is not enough.
 
 ### 2. Device / platform contracts (BLOCK if broken)
 - **`is_cpu()` ≠ `--device cpu`**. Real CPU engine requires `SGLANG_USE_CPU_ENGINE=1`.
@@ -328,6 +332,8 @@ Registration (see [write-sglang-test](../write-sglang-test/SKILL.md)):
 Review asks:
 - New Intel feature → matching `register_*_ci` (or explicit "CUDA-only" disable reason)
 - Changed Intel path → existing Xeon/XPU jobs still cover it; add a focused test if not
+- **If existing tests cannot cover the change → update/add UT in the same PR**
+  (kernel math, new op, new backend path). Do not merge on “manual smoke only”.
 - Do not put `register_*_ci` under `python/sglang/` (pre-commit rejects it)
 - Prefer small models already used on Intel CI (see `test/registered/{cpu,xpu}/`)
 - Path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost all
@@ -388,8 +394,9 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 
 ### A. 给 reviewer 的中文报告（主输出）
 
-**若 `--repo sgl-kernel-xpu`：** 只写短文 —— PR 做什么；性能；能否化简；
-（attention 类）与 FlashAttention/FlashInfer 在并行维 / tile / 数学上是否等价；总评。
+**若 `--repo sgl-kernel-xpu`：** 只写短文 —— PR 做什么；性能（优化类必须有
+benchmark，否则 🔴）；能否化简；（attention 类）与 FA/FlashInfer 并行维 /
+tile / 数学是否等价；**UT 是否覆盖改动（不够则要求补测）**；总评。
 不要展开 sglang 三大支柱全文。
 
 **若 sglang 树：** 先用几句话说明 PR 在做什么，再按三大支柱给结论：
@@ -430,6 +437,25 @@ fix or gate the shared path before we continue the Intel-side review.
 <summary>suggested comment</summary>
 
 Intel XPU/CPU review: …
+
+</details>
+
+**[missing bench]** …
+<details>
+<summary>suggested comment</summary>
+
+This looks like a performance optimization, but the PR does not include
+benchmark results (hardware, shapes, before/after). Please add numbers (or
+explicitly drop the perf claim) before we proceed.
+
+</details>
+
+**[missing / insufficient UT]** …
+<details>
+<summary>suggested comment</summary>
+
+Existing tests do not appear to cover this change. Please update or add unit
+tests in this PR so the new/changed path is exercised in CI.
 
 </details>
 
