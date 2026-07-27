@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform impact in SGLang. Explains PR logic in Chinese for the reviewer; drafts English GitHub comments when needed. Covers model/operator enabling parity with CUDA/HIP, device contracts, and CI failure attribution. Use when reviewing PRs that touch device dispatch, attention/quant/MoE/graph paths, Intel CI/Docker/deps, or when asked to review for XPU/CPU ownership. Run with /intel-xpu-cpu-review-pr <PR number>.
+description: Review SGLang PRs for Intel XPU/CPU ownership. Three pillars: (1) must not break other CI especially CUDA, (2) enabling aligned with CUDA/HIP extension points, (3) perf impact with kernels in sgl-kernel/csrc/cpu or out-of-tree sgl-kernel-xpu. Chinese analysis for the reviewer; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number>.
 ---
 
 # Intel XPU / CPU PR Review
@@ -186,6 +186,24 @@ implementation side-by-side and verify:
 - "Works on XPU" via unintended `forward_native` with no kernel + no test
 - HIP followed CUDA by alias; Intel aliases CUDA too even though kernels differ
 
+### 1c. Performance & kernel placement (pillar 3)
+Full detail: [references/performance-kernels.md](references/performance-kernels.md).
+
+| | CPU | XPU |
+|---|---|---|
+| Kernel location | **In-tree** `sgl-kernel/csrc/cpu/` | **Other repo** [sgl-kernel-xpu](https://github.com/sgl-project/sgl-kernel-xpu) |
+| Pin / build | `sgl-kernel/pyproject_cpu.toml`, Xeon Docker | `python/pyproject_xpu.toml` git pin |
+
+Review asks:
+- Perf / “fused” / “AMX” / “XPU kernel” claims → corresponding kernel diff **or**
+  linked sgl-kernel-xpu PR + pin bump. Python-only = correctness at best.
+- Hot path actually hits the kernel (`torch.ops.sgl_kernel` / sgl-kernel-xpu ops),
+  not silent `forward_native` / generic PyTorch / wrong attn backend.
+- No extra sync/copy/dtype tax on the Intel branch that CUDA does not pay; no
+  global flag flips that hurt CUDA or Intel throughput “by accident”.
+- Evidence: numbers, or explicit “no perf claim”. Strong speedup claims with
+  neither kernel nor bench → ⚠️ / 🔴.
+
 ### 2. Device / platform contracts (BLOCK if broken)
 - **`is_cpu()` ≠ `--device cpu`**. Real CPU engine requires `SGLANG_USE_CPU_ENGINE=1`.
   Code that branches only on `device == "cpu"` without `is_cpu()` / AMX checks often
@@ -349,23 +367,20 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 
 ### A. 给 reviewer 的中文报告（主输出）
 
-先用几句话说明 **这个 PR 在做什么**（动机、主路径、和 Intel 相关的部分），
-再给结论，避免一上来只有 checklist。Enabling PR 要多写一句：**和 CUDA/HIP
-怎么对齐 / 哪里有意不同**。
+先用几句话说明 **这个 PR 在做什么**，再按三大支柱给结论：
 
-1. **其他 CI（最重要）**: `PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`
-   — 本 PR 有没有把 CUDA（或其他非 Intel）原本能过的 job 弄挂
-2. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
-3. **与 CUDA/HIP 接入对比**（model/op enabling 时必填）: 对齐 / 有意分歧 / 缺失
-4. **Intel CI 归因**（Intel check 为红时必填）: 每个 job 一个标签 + 一行证据
-5. **分项**:
-   - ✅ 通过: …
-   - ⚠️ 问题: \<哪里 + 为什么 + 建议\>
-   - 🔴 阻断: \<哪里 + 为什么会坏别的 CI / Intel\>
-6. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
-   — 只要存在非 Intel 的 **PR-CAUSED** 失败，总评不得高于 `REQUEST CHANGES`/`BLOCKED`
-7. 合入证据：非 Intel PR-CAUSED 必须先修到绿（或证明是 PRE-EXISTING）。
-   Intel 侧 PRE-EXISTING / FLAKE 不要强求全绿。
+1. **其他 CI（支柱 1）**: `PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`
+2. **与其他 device 接入对齐（支柱 2）**: 对齐 / 有意分歧 / 缺失（enabling 必填）
+3. **性能 / kernel（支柱 3）**:
+   - 落点：`sgl-kernel/csrc/cpu` / sgl-kernel-xpu(+pin) / 仅 Python
+   - 是否真走到加速路径；有无对 CUDA 热路径的副作用
+   - 证据：数字或「无 perf 宣称」
+4. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
+5. **Intel CI 归因**（Intel 红灯时）: 每 job 标签 + 证据
+6. **分项** ✅ / ⚠️ / 🔴
+7. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
+   — 非 Intel **PR-CAUSED** → 不得高于 `REQUEST CHANGES`/`BLOCKED`
+8. 合入证据：先修其他 CI；Intel flake 不强求全绿；有 perf 宣称要有 kernel+数据。
 
 ### B. 给 GitHub 的英文 comment 草稿（需要评论时）
 
@@ -390,6 +405,17 @@ fix or gate the shared path before we continue the Intel-side review.
 <summary>suggested comment</summary>
 
 Intel XPU/CPU review: …
+
+</details>
+
+**[perf / kernel]** …
+<details>
+<summary>suggested comment</summary>
+
+Please clarify kernel placement: CPU kernels belong in `sgl-kernel/csrc/cpu/`;
+XPU kernels live in sgl-kernel-xpu (with a `pyproject_xpu.toml` pin bump). A
+Python-only change that falls back to native/PyTorch should not claim an AMX/XPU
+speedup — either land the kernel (+ numbers) or drop the perf claim.
 
 </details>
 

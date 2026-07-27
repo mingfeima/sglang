@@ -11,6 +11,10 @@ update when paths or support status change.
 | Engine gate | `SGLANG_USE_CPU_ENGINE=1` → `is_cpu()` | `torch.xpu.is_available()` → `is_xpu()` |
 | In-tree platform | `CpuSRTPlatform` | **None** (helpers + hardware_backend) |
 | Kernels | In-tree `sgl-kernel/csrc/cpu/` (`sglang-kernel-cpu`) | Out-of-tree [sgl-kernel-xpu](https://github.com/sgl-project/sgl-kernel-xpu) |
+
+Perf review: [performance-kernels.md](performance-kernels.md). Python-only
+enables without the matching kernel are not treated as perf wins.
+
 | Attn backend | `intel_amx` (x86 default) | `intel_xpu` (explicit; else often `triton`) |
 | Dist backend | `gloo` | `torch.distributed` + `XpuCommunicator` |
 | CI runners | `xeon-gnr` + generic CPU | `intel-bmg` / `intel-bmg-nightly` |
