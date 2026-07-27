@@ -10,7 +10,10 @@ Focus on: does this break, silently degrade, or leave untested Intel paths? Does
 features Intel does not support yet?
 
 Path map, feature matrix, and CI suite details live in
-[references/platform-map.md](references/platform-map.md) — defer to it rather than restating.
+[references/platform-map.md](references/platform-map.md).
+**CI red ≠ PR bug** triage lives in
+[references/ci-failure-attribution.md](references/ci-failure-attribution.md) —
+defer to those rather than restating.
 
 ## Usage
 
@@ -19,6 +22,9 @@ Path map, feature matrix, and CI suite details live in
 ```
 
 Optional: `/intel-xpu-cpu-review-pr <PR number> --focus xpu|cpu|both` (default `both`).
+
+When the user asks whether a red check is caused by the PR, run §14 (and the
+attribution reference) even if the code review is otherwise light.
 
 ## When this review applies
 
@@ -50,11 +56,14 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 2. `gh pr diff <N> --repo sgl-project/sglang`
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**.
 4. Grep the diff (and touched call sites) for the hot patterns in §Checklist.
-5. Check Intel CI status on the PR (`pr-test-xeon`, `pr-test-xpu`, nightly if relevant).
+5. List Intel CI outcomes (`pr-test-xeon`, `pr-test-xpu`; nightly if relevant).
+   For every **failed** Intel job, run §14 attribution before treating it as a
+   review blocker. CUDA may be greener — do not assume Intel reds are meaningful.
 6. Cross-check claimed features against the support matrix in `references/platform-map.md`
    and the operator docs (`cpu_server.mdx`, `xpu.mdx`).
-7. Output per-area verdicts + overall recommendation. Prefer actionable comments
-   (file + concern + suggested fix), not generic "please test on XPU".
+7. Output per-area verdicts + **CI attribution** + overall recommendation.
+   Prefer actionable comments (file + concern + suggested fix), not generic
+   "please test on XPU" or "CI is red".
 
 ## Checklist
 
@@ -158,7 +167,7 @@ live constraints until explicitly closed in code **and** docs.
   `LD_PRELOAD` libiomp5/tcmalloc). Do not drop these.
 - Version pins in `pyproject_{cpu,xpu}.toml` and Dockerfiles need coordinated bumps.
 
-### 11. Tests & CI
+### 11. Tests & CI registration
 Registration (see [write-sglang-test](../write-sglang-test/SKILL.md)):
 - CPU unit / import-safe: `register_cpu_ci(..., suite="base-a-test-cpu")` (main `pr-test.yml`)
 - CPU AMX e2e/kernels: `register_cpu_ci(..., suite="base-b-test-cpu")` → `pr-test-xeon.yml`
@@ -170,8 +179,9 @@ Review asks:
 - Changed Intel path → existing Xeon/XPU jobs still cover it; add a focused test if not
 - Do not put `register_*_ci` under `python/sglang/` (pre-commit rejects it)
 - Prefer small models already used on Intel CI (see `test/registered/{cpu,xpu}/`)
-- Check PR checks: path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost
-  all SRT/test/kernel changes — a red Intel job is in-scope even for "CUDA" PRs
+- Path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost all
+  SRT/test/kernel changes — Intel jobs often run even for "CUDA" PRs; that does
+  **not** mean every red is the PR's fault (see §14).
 
 ### 12. Docs & cookbook parity
 - Operator truth: `docs_new/docs/hardware-platforms/cpu_server.mdx` and `xpu.mdx`.
