@@ -15,6 +15,7 @@ Review a PR from the perspective of the **Intel XPU** and **CPU (AMX Xeon)** pla
    - **CPU kernels**: in-tree `sgl-kernel/csrc/cpu/`
    - **XPU kernels**: out-of-tree [sgl-kernel-xpu](https://github.com/sgl-project/sgl-kernel-xpu) (pinned from `python/pyproject_xpu.toml`)
    - Python-only “enable” without the matching kernel (or with silent `forward_native`) is not a real perf win — call it out. See §1c.
+   - Perf opt PRs need **benchmark numbers**; code changes need **UT coverage** (update tests if current ones miss the diff).
 
 ### Pillar 1 detail — other CI
 
