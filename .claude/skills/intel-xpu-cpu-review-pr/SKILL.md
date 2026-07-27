@@ -195,9 +195,40 @@ Review asks:
 - `gh api repos/sgl-project/sglang/pulls/<N>/comments` — unresolved Intel-related
   requests still open?
 
+### 14. CI failure attribution (red check ≠ PR bug)
+SGLang CI is unstable; **non-CUDA devices are worse**. A red `pr-test-xpu` /
+`pr-test-xeon` job is a hypothesis, not a verdict. Full procedure:
+[references/ci-failure-attribution.md](references/ci-failure-attribution.md).
+
+For each failed Intel job, assign exactly one label:
+
+| Label | When | Block merge? |
+|---|---|---|
+| **PR-CAUSED** | New signature + clear overlap with diff (or new Intel test the PR added) | Yes |
+| **PRE-EXISTING** | Same signature on recent `main` push or many unrelated PRs | No — link evidence |
+| **FLAKE / INFRA** | Timeout, runner, Docker, device init, cancelled job; or pass on rerun same SHA | No — suggest rerun |
+| **UNKNOWN** | Cannot decide | Soft hold: one rerun + residual risk note |
+
+Fast path:
+1. Extract **signature**: job name + test id + error class + one message line.
+2. Compare to recent `main` / unrelated PR runs of the **same workflow**
+   (`gh run list --workflow=pr-test-xpu.yml --branch main`, etc.).
+3. Check **code overlap**: do PR files sit under what the failing test exercises?
+4. If infra-looking or no overlap → rerun once before blaming the author.
+5. Only **PR-CAUSED** (or new Intel coverage the PR claims) blocks on CI grounds.
+
+Bias: on Intel, assume PRE-EXISTING/FLAKE until overlap is clear; if the PR
+**added** the failing test or claims XPU/CPU support, assume PR-CAUSED.
+
+Do **not** require green Intel CI as a blanket gate when endemic failures are
+documented in the attribution section of the review.
+
 ## Output
 
-Lead with a one-line **Intel impact** summary: `none | docs-only | CPU | XPU | both | shared-SRT risk`.
+Lead with:
+1. **Intel impact**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
+2. **CI attribution** (required if any Intel check is red): per-job label +
+   one-line evidence (see reference doc snippet)
 
 Then per area:
 - ✅ PASS
@@ -206,12 +237,16 @@ Then per area:
 
 Overall: **APPROVE** / **COMMENT** / **REQUEST CHANGES** / **BLOCKED**
 
-If requesting changes, list the minimum CI evidence you want (e.g. green `pr-test-xpu`
-stage-b, or a local AMX smoke command).
+If requesting changes, list the minimum CI evidence you want (e.g. green
+`pr-test-xpu` stage-b **after** confirming the prior red was PR-CAUSED, or a
+local AMX smoke command). Do not demand green Intel when attribution is
+PRE-EXISTING/FLAKE.
 
 ## Related skills
 
 - [write-sglang-test](../write-sglang-test/SKILL.md) — registering CPU/XPU tests
 - [ci-workflow-guide](../ci-workflow-guide/SKILL.md) — suite/stage orchestration
+- [sglang-bisect-ci-regression](../sglang-bisect-ci-regression/SKILL.md) — when a
+  failure is consistent on main and needs a culprit commit
 - [env-var-conventions](../env-var-conventions/SKILL.md) — new `SGLANG_*` vars
 - [sglang-runtime-context](../sglang-runtime-context/SKILL.md) — ServerArgs / runtime state

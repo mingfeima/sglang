@@ -83,6 +83,13 @@ update when paths or support status change.
 | `.github/workflows/nightly-test-intel.yml` | `nightly-xpu-{2,4}-gpu` |
 | `.github/workflows/release-docker-xeon.yml` | Publish `*-xeon` tags |
 | `.github/workflows/release-docker-intel-xpu-nightly.yml` | Publish `intel/sglang-dev` |
+| `.github/workflows/xpu-ci-job-monitor.yml` | Pass-rate / fleet monitor for XPU jobs |
+| `scripts/ci/utils/xpu_job_monitor.py` | Query XPU job history / summaries |
+
+**Stability note:** Xeon/XPU PR workflows commonly fail on unrelated PRs. Always
+attribute reds per [ci-failure-attribution.md](ci-failure-attribution.md) before
+blocking. Baseline = recent `--branch main` runs of the same workflow (these
+workflows use `push` to main, not CUDA's `schedule` event) plus other recent PRs.
 
 ## Env / CLI cheat sheet
 
