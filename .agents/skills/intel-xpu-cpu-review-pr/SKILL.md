@@ -59,21 +59,19 @@ Bilingual by default — do not ask; just follow:
 
 | Audience | Language | What |
 |---|---|---|
-| **Reviewer (user)** | **中文** | PR 在做什么、Intel 影响、风险、CI 归因、是否该 approve — 用中文把逻辑讲清楚 |
-| **GitHub PR comment** | **English** | 准备贴到 PR 的 review / inline comment / 回复作者 — 必须是英文 |
+| **Reviewer (user)** | **中文** | PR 在做什么、结论、风险 — **尽量短**；引用代码时 **带行号** |
+| **GitHub PR comment** | **English** | 可贴草稿 — **尽量短**；指到文件+行号 |
 
 Rules:
-- The main review write-up the user reads is **Chinese**: summarize the PR's intent
-  and control flow, then Intel-specific findings. Prefer short paragraphs over
-  English checklist dumps.
-- Keep stable machine labels in English so they stay greppable:
-  `PR-CAUSED` / `PRE-EXISTING` / `FLAKE` / `INFRA` / `APPROVE` / …
-- Whenever a finding should be posted on the PR, also emit a ready-to-paste
-  **English** block (see §Output). Do not post comments unless the user asks;
-  just prepare the text.
-- If the user explicitly says `英文输出` / `English only`, switch the whole
-  review to English. If they say `只分析不写 comment`, skip the English paste
-  blocks.
+- **Brevity first**: 中文主报告通常半屏以内；英文每条 comment 2–4 句。少写背景，多写结论。
+- **中文报告必须带行号**: 指出问题/关键逻辑时用 `path:start-end` 或引用块格式
+  （\`\`\`start:end:path\`\`\`）。没有具体行号就不要空泛说「主循环里」。
+- Keep stable machine labels in English: `PR-CAUSED` / `PRE-EXISTING` / `FLAKE` /
+  `APPROVE` / …
+- Emit ready-to-paste **English** blocks when a finding should go on the PR; do
+  **not** auto-post unless the user asks.
+- `英文输出` / `English only` → whole review in English (still short + line refs).
+- `只分析不写 comment` → skip English paste blocks.
 
 ## When this review applies
 
@@ -391,121 +389,46 @@ documented — but **do** require not newly breaking other CI.
 
 ## Output
 
-Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
+Default: **短中文 + 短英文草稿**（见 §Language）。默认偏短，不写长 checklist 复述。
 
-### A. 给 reviewer 的中文报告（主输出）
+### A. 中文报告（主输出，尽量短 + 行号）
 
-**若 `--repo sgl-kernel-xpu`：** 只写短文 —— PR 做什么；性能（优化类必须有
-benchmark，否则 🔴）；能否化简；（attention 类）与 FA/FlashInfer 并行维 /
-tile / 数学是否等价；**UT 是否覆盖改动（不够则要求补测）**；总评。
-不要展开 sglang 三大支柱全文。
+结构固定、能省则省：
 
-**若 sglang 树：** 先用几句话说明 PR 在做什么，再按三大支柱给结论：
+```text
+## 摘要
+<1–3 句：PR 做什么 + 总评 APPROVE|COMMENT|REQUEST CHANGES|BLOCKED>
 
-1. **其他 CI（支柱 1）**: `PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`
-2. **与其他 device 接入对齐（支柱 2）**: 对齐 / 有意分歧 / 缺失（enabling 必填）
-3. **性能 / kernel（支柱 3）**:
-   - 落点：`sgl-kernel/csrc/cpu` / sgl-kernel-xpu(+pin) / 仅 Python
-   - 是否真走到加速路径；有无对 CUDA 热路径的副作用
-   - 优化类：**必须有 benchmark**；否则 🔴
-   - **UT 是否覆盖改动**；不够则同 PR 补测
-4. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
-5. **Intel CI 归因**（Intel 红灯时）: 每 job 标签 + 证据
-6. **分项** ✅ / ⚠️ / 🔴
-7. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
-   — 非 Intel **PR-CAUSED** → 不得高于 `REQUEST CHANGES`/`BLOCKED`
-8. 合入证据：先修其他 CI；Intel flake 不强求全绿；有 perf 宣称要有
-   kernel+benchmark；改动要有 UT 覆盖。
+## 支柱/焦点
+- 其他 CI: …
+- 对齐: …          # enabling 才写
+- 性能/kernel: …   # 落点 + bench有无 + UT有无
+- （kernel-xpu）化简 / FA对照: …
 
-### B. 给 GitHub 的英文 comment 草稿（需要评论时）
-
-对每一条需要对作者说的意见，附一段 **可直接粘贴** 的英文。按严重度分组：
-
-```markdown
-### Ready-to-paste PR comments (English)
-
-**[blocking — other CI]** …
-<details>
-<summary>suggested comment</summary>
-
-This change appears to break non-Intel CI (e.g. CUDA `pr-test.yml` job …) with
-a signature that is not present on recent main/unrelated PRs. Intel enabling
-must be device-guarded so CUDA defaults, imports, and tests stay green. Please
-fix or gate the shared path before we continue the Intel-side review.
-
-</details>
-
-**[blocking]** `path/to/file.py`: …
-<details>
-<summary>suggested comment</summary>
-
-Intel XPU/CPU review: …
-
-</details>
-
-**[missing bench]** …
-<details>
-<summary>suggested comment</summary>
-
-This looks like a performance optimization, but the PR does not include
-benchmark results (hardware, shapes, before/after). Please add numbers (or
-explicitly drop the perf claim) before we proceed.
-
-</details>
-
-**[missing / insufficient UT]** …
-<details>
-<summary>suggested comment</summary>
-
-Existing tests do not appear to cover this change. Please update or add unit
-tests in this PR so the new/changed path is exercised in CI.
-
-</details>
-
-**[kernel-xpu — math / tiling]** …
-<details>
-<summary>suggested comment</summary>
-
-For this attention kernel, please call out how the parallel dimensions and
-Q/KV tiles compare to FlashAttention / FlashInfer (Br/Bc, online softmax
-schedule). If the math (rescale / LSE / mask / dtype accumulate) intentionally
-differs, document it; silent divergence from FA/FlashInfer is a blocker.
-
-</details>
-
-**[perf / kernel]** …
-<details>
-<summary>suggested comment</summary>
-
-Please clarify kernel placement: CPU kernels belong in `sgl-kernel/csrc/cpu/`;
-XPU kernels live in sgl-kernel-xpu (with a `pyproject_xpu.toml` pin bump). A
-Python-only change that falls back to native/PyTorch should not claim an AMX/XPU
-speedup — either land the kernel (+ numbers) or drop the perf claim.
-
-</details>
-
-**[parity]** enabling vs CUDA/HIP: …
-<details>
-<summary>suggested comment</summary>
-
-Please wire this through the same extension point CUDA uses
-(`MultiPlatformOp.forward_*` / attention registry / model allowlist) instead of
-an Intel-only branch. If parity is intentionally incomplete (e.g. no MLA
-prefill on intel_xpu), please gate/error explicitly like other non-CUDA
-platforms rather than silently falling back to native/triton.
-
-</details>
-
-**[nit / question]** …
+## 问题
+- 🔴/⚠️ `path:Lstart-Lend` — 一句话原因 + 一句话建议
 ```
 
-Inline 风格（指向具体文件/行为）优于空泛的 "please test on XPU"。
-CI 归因类 comment 用英文写清 label + evidence links，模板见
-[ci-failure-attribution.md](references/ci-failure-attribution.md) —
-但贴给作者前把说明句改成完整英文句子。
+要求：
+- **每条问题必须有行号**（`file:12-34` 或 code citation）。纯流程/CI 归因可无行号。
+- 不写大段「PR 动机散文」；不把整个 skill checklist 贴进报告。
+- sgl-kernel-xpu：同样短结构，只保留 perf / 化简 / FA / bench / UT。
 
-**不要**自动 `gh pr comment` / 提交 review，除非用户明确说「帮我发到 PR」/
-「post the comment」。
+### B. 英文 comment 草稿（尽量短）
+
+每条 2–4 句，**文件+行号**打头，按严重度：
+
+```markdown
+### Ready-to-paste (English)
+
+**[blocking]** `file.hpp:120-145`: <one-line issue>. <one-line ask>.
+
+**[missing UT]** No test covers <path/symbol>. Please add UT in this PR.
+
+**[nit]** `file.hpp:80`: <optional simplify>.
+```
+
+不要套 `<details>` 长模板，除非用户要展开。不要自动 `gh pr comment`。
 
 ## Related skills
 
