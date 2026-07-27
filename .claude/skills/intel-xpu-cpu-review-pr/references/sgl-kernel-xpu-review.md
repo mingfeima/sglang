@@ -85,14 +85,20 @@ compare to the CUDA sibling kernel in sgl-kernel / sgl-kernel-xpu history.
 
 ## Output (中文 + 英文草稿)
 
-中文报告覆盖：
+**尽量短。** 中文问题条目必须带 `file:Lstart-Lend`。
 
-1. PR 在做什么（kernel / API）
-2. **性能**：更好 / 存疑；若是优化 PR → **有无 benchmark**（无则 🔴）
-3. **能否化简**：具体建议或「已够干净」
-4. **与 FA / FlashInfer**（若相关）：并行维、tile、数学是否等价；不等价则 🔴
-5. **测试覆盖**：现有 UT 是否盖住改动；缺则是否已补 UT
-6. 总评
+```text
+## 摘要
+<1–2 句 + 总评>
 
-英文 comment 针对作者：短、指到具体循环/tile/公式/缺失的 bench 或 UT，
-不要贴整份 sglang checklist。
+## 焦点
+- 性能: …（优化则写有无 bench）
+- 化简: …
+- FA/FlashInfer: …（无关则跳过）
+- UT: 有覆盖 / 缺 → 🔴
+
+## 问题
+- ⚠️ `xe_fmha_fwd_mainloop.hpp:520-545` — …
+```
+
+英文每条 2–4 句，同样带行号。
