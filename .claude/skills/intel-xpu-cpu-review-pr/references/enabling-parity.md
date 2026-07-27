@@ -54,7 +54,10 @@ intentional and visible.
 - New `intel_xxx_utils.py` that reimplements dispatch already in `MultiPlatformOp`
 - Only documents `CUDA_VISIBLE_DEVICES` in an XPU enabling guide
 - Claims FP8 on XPU but only lands a CUDA `#ifdef` path
-- Updates Gemma4/Llama4 allowlist for a new CUDA backend and leaves Intel entries stale while advertising Intel in the PR body
+- Silent fallback that CUDA would never accept without a test
+- Allowlist updated for Intel while a shared default changes under CUDA CI
+- **Any edit that newly fails CUDA / other non-Intel CI** — hard block; fix or
+  device-guard before polishing Intel paths
 
 ## Review output hint (中文)
 

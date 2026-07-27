@@ -14,6 +14,13 @@ Goal: label each failed job as one of:
 | **FLAKE / INFRA** | Timeout, runner, Docker, OOM, device lost, checkout | Suggest `/rerun-failed-ci`; do not block unless persistent |
 | **UNKNOWN** | Cannot decide with available logs | Ask for one rerun + note residual risk; optionally bisect |
 
+## Priority reminder
+
+**Breaking other platforms' CI (esp. CUDA) outranks Intel completeness.**
+When attributing, always classify CUDA / non-Intel jobs first. A PR that only
+helps XPU/CPU but newly fails CUDA is `PR-CAUSED` → block, even if Intel jobs
+are green or "only" flaky.
+
 ## Decision tree (fast path)
 
 ```text

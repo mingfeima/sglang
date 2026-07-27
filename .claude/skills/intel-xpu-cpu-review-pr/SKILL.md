@@ -6,8 +6,26 @@ description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform imp
 # Intel XPU / CPU PR Review
 
 Review a PR from the perspective of the **Intel XPU** and **CPU (AMX Xeon)** platform owners.
-Focus on: does this break, silently degrade, or leave untested Intel paths? Does it claim
-features Intel does not support yet?
+
+## Non-negotiable (highest priority)
+
+**This PR must not break other platforms' CI** — especially CUDA (`pr-test.yml` and
+friends), and also HIP/ROCm or other device jobs that were healthy on the PR base.
+
+Intel enabling / shared-SRT edits that make XPU/CPU better while turning CUDA red
+are an automatic **BLOCK**, regardless of Intel-side elegance. Prefer:
+
+- device-guarded branches (`is_cuda` / `is_hip` / `is_cpu` / `is_xpu`)
+- lazy CUDA-only imports
+- no change to CUDA default backends, graph defaults, or quant registration
+  unless intentionally cross-platform and covered by CUDA CI
+
+Intel CI is noisy (see §14); **other-device CI that this PR newly fails is not
+negotiable noise** — treat **PR-CAUSED** failures on CUDA (or previously-green
+non-Intel jobs) as merge blockers first.
+
+Focus after that: does this break, silently degrade, or leave untested Intel paths?
+Does it claim features Intel does not support yet?
 
 Path map, feature matrix, and CI suite details live in
 [references/platform-map.md](references/platform-map.md).
@@ -80,20 +98,44 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 2. `gh pr diff <N> --repo sgl-project/sglang`
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
    and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
-4. Grep the diff (and touched call sites) for the hot patterns in §Checklist.
+4. **Other-CI gate (do this before deep Intel review):** list failed checks on
+   CUDA / main `pr-test.yml` (and AMD if present). Attribute each with §14.
+   Any **PR-CAUSED** failure outside Intel → **BLOCK** immediately; draft the
+   English comment. Do not approve Intel-only wins that regress CUDA.
+5. Grep the diff (and touched call sites) for the hot patterns in §Checklist.
    For enabling PRs, open the CUDA/HIP reference path side-by-side (§1b /
    `references/enabling-parity.md`).
-5. List Intel CI outcomes (`pr-test-xeon`, `pr-test-xpu`; nightly if relevant).
+6. List Intel CI outcomes (`pr-test-xeon`, `pr-test-xpu`; nightly if relevant).
    For every **failed** Intel job, run §14 attribution before treating it as a
    review blocker. CUDA may be greener — do not assume Intel reds are meaningful.
-6. Cross-check claimed features against the support matrix in `references/platform-map.md`
+7. Cross-check claimed features against the support matrix in `references/platform-map.md`
    and the operator docs (`cpu_server.mdx`, `xpu.mdx`).
-7. Output per-area verdicts + **CUDA/HIP parity note (enabling PRs)** +
-   **CI attribution** + overall recommendation.
-   Prefer actionable comments (file + concern + suggested fix), not generic
-   "please test on XPU" or "CI is red".
+8. Output: **other-CI verdict first**, then Intel findings + CUDA/HIP parity +
+   Intel CI attribution + overall recommendation.
 
 ## Checklist
+
+### 0. Do not break other CI (BLOCK if violated)
+Highest bar — ahead of Intel feature completeness.
+
+- Shared Python/C++ changes must keep **CUDA** behavior and imports intact
+  (lazy imports, device guards, no accidental default-backend flips).
+- Enabling PRs must not change global quant/attn/graph defaults that CUDA CI
+  relies on; scope Intel via `is_xpu()` / `is_cpu()` / `device == "xpu"|"cpu"`.
+- Touching `sgl-kernel` common code, `pyproject.toml` (non-cpu/xpu), or shared
+  Docker/CI scripts → explicitly check CUDA / kernel CI, not only Xeon/XPU.
+- Diff that widens a type/shape/API used by CUDA kernels "for Intel" without a
+  CUDA test update is suspicious — require CUDA CI green or a clear revert plan.
+- **Verdict required in every review:** `other-CI: PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`.
+  Only `PR-CAUSED-BLOCK` on non-Intel jobs blocks the PR from an Intel-owner review.
+
+How to check quickly:
+
+```bash
+gh pr checks <N> --repo sgl-project/sglang
+# Focus on pr-test.yml / CUDA jobs first; attribute with §14
+gh run list --repo sgl-project/sglang --workflow=pr-test.yml --branch <pr-head> --limit 5
+```
 
 ### 1. Triage & scope
 - Does the PR title/body match the Intel surface area it actually touches?
@@ -278,28 +320,36 @@ SGLang CI is unstable; **non-CUDA devices are worse**. A red `pr-test-xpu` /
 `pr-test-xeon` job is a hypothesis, not a verdict. Full procedure:
 [references/ci-failure-attribution.md](references/ci-failure-attribution.md).
 
-For each failed Intel job, assign exactly one label:
+**Priority order when many jobs are red:**
+
+1. **Non-Intel / CUDA jobs with PR-CAUSED signature** → hard **BLOCK** (§0)
+2. Intel jobs with PR-CAUSED signature → block or request changes
+3. PRE-EXISTING / FLAKE on Intel → comment only, do not block
+4. PRE-EXISTING red on CUDA → note it; still not introduced by this PR
+
+For each failed job, assign exactly one label:
 
 | Label | When | Block merge? |
 |---|---|---|
-| **PR-CAUSED** | New signature + clear overlap with diff (or new Intel test the PR added) | Yes |
+| **PR-CAUSED** | New signature + clear overlap with diff (or new test the PR added) | **Yes** — always for CUDA/other-device; yes for Intel |
 | **PRE-EXISTING** | Same signature on recent `main` push or many unrelated PRs | No — link evidence |
 | **FLAKE / INFRA** | Timeout, runner, Docker, device init, cancelled job; or pass on rerun same SHA | No — suggest rerun |
-| **UNKNOWN** | Cannot decide | Soft hold: one rerun + residual risk note |
+| **UNKNOWN** | Cannot decide | Soft hold on CUDA/other; on Intel, one rerun + residual risk note |
 
 Fast path:
 1. Extract **signature**: job name + test id + error class + one message line.
-2. Compare to recent `main` / unrelated PR runs of the **same workflow**
-   (`gh run list --workflow=pr-test-xpu.yml --branch main`, etc.).
+2. Compare to recent `main` / unrelated PR runs of the **same workflow**.
 3. Check **code overlap**: do PR files sit under what the failing test exercises?
 4. If infra-looking or no overlap → rerun once before blaming the author.
-5. Only **PR-CAUSED** (or new Intel coverage the PR claims) blocks on CI grounds.
+5. **Never** dismiss a CUDA **PR-CAUSED** fail as "Intel CI is flaky".
 
-Bias: on Intel, assume PRE-EXISTING/FLAKE until overlap is clear; if the PR
+Bias: on **Intel**, assume PRE-EXISTING/FLAKE until overlap is clear; if the PR
 **added** the failing test or claims XPU/CPU support, assume PR-CAUSED.
+On **CUDA / other devices**, bias toward PR-CAUSED when the diff touches shared
+SRT and the signature is new vs base/`main`.
 
 Do **not** require green Intel CI as a blanket gate when endemic failures are
-documented in the attribution section of the review.
+documented — but **do** require not newly breaking other CI.
 
 ## Output
 
@@ -311,17 +361,19 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 再给结论，避免一上来只有 checklist。Enabling PR 要多写一句：**和 CUDA/HIP
 怎么对齐 / 哪里有意不同**。
 
-1. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
-2. **与 CUDA/HIP 接入对比**（model/op enabling 时必填）: 对齐 / 有意分歧 / 缺失
-3. **CI 归因**（任一 Intel check 为红时必填）: 每个 job 一个标签 + 一行证据
-4. **分项**:
+1. **其他 CI（最重要）**: `PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`
+   — 本 PR 有没有把 CUDA（或其他非 Intel）原本能过的 job 弄挂
+2. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
+3. **与 CUDA/HIP 接入对比**（model/op enabling 时必填）: 对齐 / 有意分歧 / 缺失
+4. **Intel CI 归因**（Intel check 为红时必填）: 每个 job 一个标签 + 一行证据
+5. **分项**:
    - ✅ 通过: …
    - ⚠️ 问题: \<哪里 + 为什么 + 建议\>
-   - 🔴 阻断: \<哪里 + 为什么会坏 Intel\>
-5. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
-6. 若要改再合入：写明你要的最小 CI 证据（例如确认过是 PR-CAUSED 之后
-   `pr-test-xpu` stage-b 变绿，或本地 AMX smoke）。PRE-EXISTING / FLAKE
-   不要强求 Intel 全绿。
+   - 🔴 阻断: \<哪里 + 为什么会坏别的 CI / Intel\>
+6. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
+   — 只要存在非 Intel 的 **PR-CAUSED** 失败，总评不得高于 `REQUEST CHANGES`/`BLOCKED`
+7. 合入证据：非 Intel PR-CAUSED 必须先修到绿（或证明是 PRE-EXISTING）。
+   Intel 侧 PRE-EXISTING / FLAKE 不要强求全绿。
 
 ### B. 给 GitHub 的英文 comment 草稿（需要评论时）
 
@@ -329,6 +381,17 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 
 ```markdown
 ### Ready-to-paste PR comments (English)
+
+**[blocking — other CI]** …
+<details>
+<summary>suggested comment</summary>
+
+This change appears to break non-Intel CI (e.g. CUDA `pr-test.yml` job …) with
+a signature that is not present on recent main/unrelated PRs. Intel enabling
+must be device-guarded so CUDA defaults, imports, and tests stay green. Please
+fix or gate the shared path before we continue the Intel-side review.
+
+</details>
 
 **[blocking]** `path/to/file.py`: …
 <details>
