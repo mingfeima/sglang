@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform impact in SGLang. Explains PR logic in Chinese for the reviewer; drafts English GitHub comments when needed. Use when reviewing PRs that touch device dispatch, attention/quant/MoE/graph paths, Intel CI/Docker/deps, or when asked to review for XPU/CPU ownership. Run with /intel-xpu-cpu-review-pr <PR number>.
+description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform impact in SGLang. Explains PR logic in Chinese for the reviewer; drafts English GitHub comments when needed. Covers model/operator enabling parity with CUDA/HIP, device contracts, and CI failure attribution. Use when reviewing PRs that touch device dispatch, attention/quant/MoE/graph paths, Intel CI/Docker/deps, or when asked to review for XPU/CPU ownership. Run with /intel-xpu-cpu-review-pr <PR number>.
 ---
 
 # Intel XPU / CPU PR Review
@@ -76,14 +76,18 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 
 1. `gh pr view <N> --repo sgl-project/sglang --json title,body,files,author,baseRefName,headRefName,labels,commits,reviews,statusCheckRollup`
 2. `gh pr diff <N> --repo sgl-project/sglang`
-3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**.
+3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
+   and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
 4. Grep the diff (and touched call sites) for the hot patterns in §Checklist.
+   For enabling PRs, open the CUDA/HIP reference path side-by-side (§1b /
+   `references/enabling-parity.md`).
 5. List Intel CI outcomes (`pr-test-xeon`, `pr-test-xpu`; nightly if relevant).
    For every **failed** Intel job, run §14 attribution before treating it as a
    review blocker. CUDA may be greener — do not assume Intel reds are meaningful.
 6. Cross-check claimed features against the support matrix in `references/platform-map.md`
    and the operator docs (`cpu_server.mdx`, `xpu.mdx`).
-7. Output per-area verdicts + **CI attribution** + overall recommendation.
+7. Output per-area verdicts + **CUDA/HIP parity note (enabling PRs)** +
+   **CI attribution** + overall recommendation.
    Prefer actionable comments (file + concern + suggested fix), not generic
    "please test on XPU" or "CI is red".
 
@@ -95,6 +99,56 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
   `server_args`, `common.py` device helpers, attention registry).
 - Note whether follow-up work is needed in **out-of-tree** `sgl-kernel-xpu`
   (`https://github.com/sgl-project/sgl-kernel-xpu`) — XPU kernels are not in-tree.
+- **Enabling PR?** (new model / new op / new quant / new attn path / "support XPU|CPU")
+  → also run §1b. These PRs are common on Intel and often invent a one-off hook
+  that diverges from CUDA/HIP.
+
+### 1b. Model / operator enabling — CUDA / HIP 接入一致性
+Intel enabling work must plug into the **same extension points** other devices use,
+not a parallel Intel-only side path — unless there is an explicit, documented reason
+(kernel out-of-tree, missing hardware feature, etc.).
+
+Full checklist:
+[references/enabling-parity.md](references/enabling-parity.md).
+
+When reviewing an enabling PR, open the CUDA (and HIP if present) reference
+implementation side-by-side and verify:
+
+1. **Hook point**: same registry / `MultiPlatformOp` / `ServerArgs` handler /
+   model override list that CUDA uses — not a new `if is_xpu():` island in a
+   random call site.
+2. **Dispatch shape**: `forward_cuda` / `forward_hip` / `forward_cpu` /
+   `forward_xpu` symmetry. HIP often aliases CUDA; **CPU/XPU must not blindly
+   alias** unless the kernel is truly shared. Default `forward_xpu`→native and
+   `forward_cpu`→native are footguns in enabling PRs — flag silent fallbacks.
+3. **Registration completeness**: attn backend name in `attention_registry`,
+   quant method in `QUANTIZATION_METHODS` (and CPU allowlist if needed), graph
+   runner map in `cuda_graph_setup`, model-arch accepted backends in
+   `server_args` / `arg_groups/overrides.py` (e.g. Gemma4 / Llama4 / GPT-OSS
+   lists include `intel_xpu` / `intel_amx` next to `triton` / `fa3` / `aiter`
+   **or** explicitly reject with a clear error).
+4. **Capability honesty**: if CUDA path enables graph / spec / FP8 / MLA prefill
+   and Intel cannot, the enabling PR must **gate or error**, not pretend parity.
+   Mirror how HIP/NPU leave unsupported branches — do not copy CUDA defaults
+   onto XPU.
+5. **API / flag surface**: same CLI flags and config keys as CUDA where behavior
+   exists; do not invent `--xpu-only-*` when an existing flag can grow a device
+   branch. Device affinity env stays platform-native (`ZE_AFFINITY_MASK` vs
+   `CUDA_VISIBLE_DEVICES`).
+6. **Tests**: CUDA enabling PRs usually add `register_cuda_ci`; Intel enabling
+   should add `register_xpu_ci` / `register_cpu_ci` at the analogous suite, or
+   state "CUDA-only" in the PR. Compare test structure (server args, model id,
+   assertions) to the CUDA twin — not a bare import smoke if CUDA has e2e.
+7. **Docs / cookbook**: same command shape as CUDA docs, with Intel device /
+   attn backend / known limitations swapped in — not a divergent launch story.
+
+**Anti-patterns to BLOCK or call out:**
+- Copy-paste of CUDA kernel launch wrappers with `torch.cuda` left inside
+- New Intel-only helper that duplicates an existing `MultiPlatformOp`
+- Model override allowlist updated for `triton`/`fa3` but forgetting `intel_xpu`
+  / `intel_amx` when the PR claims Intel support
+- "Works on XPU" via unintended `forward_native` with no kernel + no test
+- HIP followed CUDA by alias; Intel aliases CUDA too even though kernels differ
 
 ### 2. Device / platform contracts (BLOCK if broken)
 - **`is_cpu()` ≠ `--device cpu`**. Real CPU engine requires `SGLANG_USE_CPU_ENGINE=1`.
@@ -252,16 +306,18 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 ### A. 给 reviewer 的中文报告（主输出）
 
 先用几句话说明 **这个 PR 在做什么**（动机、主路径、和 Intel 相关的部分），
-再给结论，避免一上来只有 checklist。
+再给结论，避免一上来只有 checklist。Enabling PR 要多写一句：**和 CUDA/HIP
+怎么对齐 / 哪里有意不同**。
 
 1. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
-2. **CI 归因**（任一 Intel check 为红时必填）: 每个 job 一个标签 + 一行证据
-3. **分项**:
+2. **与 CUDA/HIP 接入对比**（model/op enabling 时必填）: 对齐 / 有意分歧 / 缺失
+3. **CI 归因**（任一 Intel check 为红时必填）: 每个 job 一个标签 + 一行证据
+4. **分项**:
    - ✅ 通过: …
    - ⚠️ 问题: \<哪里 + 为什么 + 建议\>
    - 🔴 阻断: \<哪里 + 为什么会坏 Intel\>
-4. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
-5. 若要改再合入：写明你要的最小 CI 证据（例如确认过是 PR-CAUSED 之后
+5. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
+6. 若要改再合入：写明你要的最小 CI 证据（例如确认过是 PR-CAUSED 之后
    `pr-test-xpu` stage-b 变绿，或本地 AMX smoke）。PRE-EXISTING / FLAKE
    不要强求 Intel 全绿。
 
@@ -277,6 +333,18 @@ Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 <summary>suggested comment</summary>
 
 Intel XPU/CPU review: …
+
+</details>
+
+**[parity]** enabling vs CUDA/HIP: …
+<details>
+<summary>suggested comment</summary>
+
+Please wire this through the same extension point CUDA uses
+(`MultiPlatformOp.forward_*` / attention registry / model allowlist) instead of
+an Intel-only branch. If parity is intentionally incomplete (e.g. no MLA
+prefill on intel_xpu), please gate/error explicitly like other non-CUDA
+platforms rather than silently falling back to native/triton.
 
 </details>
 
