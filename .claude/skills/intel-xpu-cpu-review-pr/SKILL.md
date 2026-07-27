@@ -7,33 +7,27 @@ description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform imp
 
 Review a PR from the perspective of the **Intel XPU** and **CPU (AMX Xeon)** platform owners.
 
-## Non-negotiable (highest priority)
+## Three pillars (in order)
 
-**This PR must not break other platforms' CI** — especially CUDA (`pr-test.yml` and
-friends), and also HIP/ROCm or other device jobs that were healthy on the PR base.
+1. **不能挂掉其他 CI** — especially CUDA. Intel wins that regress other devices are a **BLOCK**.
+2. **XPU/CPU enabling 要和别的 device 对齐** — same extension points as CUDA/HIP (`MultiPlatformOp`, registries, allowlists); no Intel-only side paths without a documented reason. See §1b / [enabling-parity.md](references/enabling-parity.md).
+3. **关注性能影响与 kernel 落点**
+   - **CPU kernels**: in-tree `sgl-kernel/csrc/cpu/`
+   - **XPU kernels**: out-of-tree [sgl-kernel-xpu](https://github.com/sgl-project/sgl-kernel-xpu) (pinned from `python/pyproject_xpu.toml`)
+   - Python-only “enable” without the matching kernel (or with silent `forward_native`) is not a real perf win — call it out. See §1c.
+
+### Pillar 1 detail — other CI
 
 Intel enabling / shared-SRT edits that make XPU/CPU better while turning CUDA red
-are an automatic **BLOCK**, regardless of Intel-side elegance. Prefer:
+are an automatic **BLOCK**. Prefer device-guarded branches, lazy CUDA-only imports,
+and no accidental change to CUDA defaults. Intel CI is noisy (§14); **other-device
+CI that this PR newly fails is not negotiable noise**.
 
-- device-guarded branches (`is_cuda` / `is_hip` / `is_cpu` / `is_xpu`)
-- lazy CUDA-only imports
-- no change to CUDA default backends, graph defaults, or quant registration
-  unless intentionally cross-platform and covered by CUDA CI
+Path map: [platform-map.md](references/platform-map.md).
+CI attribution: [ci-failure-attribution.md](references/ci-failure-attribution.md).
+Enabling parity: [enabling-parity.md](references/enabling-parity.md).
+Perf / kernels: [performance-kernels.md](references/performance-kernels.md).
 
-Intel CI is noisy (see §14); **other-device CI that this PR newly fails is not
-negotiable noise** — treat **PR-CAUSED** failures on CUDA (or previously-green
-non-Intel jobs) as merge blockers first.
-
-Focus after that: does this break, silently degrade, or leave untested Intel paths?
-Does it claim features Intel does not support yet?
-
-Path map, feature matrix, and CI suite details live in
-[references/platform-map.md](references/platform-map.md).
-**CI red ≠ PR bug** triage lives in
-[references/ci-failure-attribution.md](references/ci-failure-attribution.md).
-Model/op enabling vs CUDA/HIP wiring lives in
-[references/enabling-parity.md](references/enabling-parity.md).
-Defer to those rather than restating.
 
 ## Usage
 
@@ -98,20 +92,18 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 2. `gh pr diff <N> --repo sgl-project/sglang`
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
    and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
-4. **Other-CI gate (do this before deep Intel review):** list failed checks on
-   CUDA / main `pr-test.yml` (and AMD if present). Attribute each with §14.
-   Any **PR-CAUSED** failure outside Intel → **BLOCK** immediately; draft the
-   English comment. Do not approve Intel-only wins that regress CUDA.
-5. Grep the diff (and touched call sites) for the hot patterns in §Checklist.
-   For enabling PRs, open the CUDA/HIP reference path side-by-side (§1b /
-   `references/enabling-parity.md`).
-6. List Intel CI outcomes (`pr-test-xeon`, `pr-test-xpu`; nightly if relevant).
-   For every **failed** Intel job, run §14 attribution before treating it as a
-   review blocker. CUDA may be greener — do not assume Intel reds are meaningful.
-7. Cross-check claimed features against the support matrix in `references/platform-map.md`
-   and the operator docs (`cpu_server.mdx`, `xpu.mdx`).
-8. Output: **other-CI verdict first**, then Intel findings + CUDA/HIP parity +
-   Intel CI attribution + overall recommendation.
+4. **Other-CI gate (pillar 1):** list failed checks on CUDA / main `pr-test.yml`
+   (and AMD if present). Attribute each with §14. Any **PR-CAUSED** failure
+   outside Intel → **BLOCK** immediately.
+5. Grep the diff for checklist hot patterns. Enabling PRs → §1b parity with
+   CUDA/HIP ([enabling-parity.md](references/enabling-parity.md)).
+6. **Perf / kernels (pillar 3):** does the PR touch `sgl-kernel/csrc/cpu/`,
+   bump `pyproject_xpu.toml` / link sgl-kernel-xpu, or only Python?
+   See §1c / [performance-kernels.md](references/performance-kernels.md).
+7. List Intel CI outcomes; attribute reds with §14 (Intel flake ≠ auto-block).
+8. Cross-check claimed features vs [platform-map.md](references/platform-map.md)
+   and `cpu_server.mdx` / `xpu.mdx`.
+9. Output in pillar order: **其他 CI → 接入对齐 → 性能/kernel → Intel 细节**.
 
 ## Checklist
 
