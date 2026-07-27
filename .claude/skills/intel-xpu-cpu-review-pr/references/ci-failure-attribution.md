@@ -149,15 +149,27 @@ Block (or request changes) even on a flaky fleet if:
 Otherwise: approve/comment with an explicit **CI attribution** line so the author
 and other reviewers do not thrash on endemic reds.
 
-## Output snippet (paste into review)
+## Output snippet (paste into the Chinese review; English version for the author)
+
+中文报告里可写：
 
 ```text
-CI attribution:
+CI 归因:
 - pr-test-xpu / stage-b-test-1-gpu-xpu: PRE-EXISTING
-  signature: test_intel_xpu_backend.py::test_mha AssertionError: ...
-  evidence: also failing on main run <url> and unrelated PR <url>
+  签名: test_intel_xpu_backend.py::test_mha AssertionError: ...
+  证据: main run <url> 与无关 PR <url> 同样失败
 - pr-test-xeon / base-b-test-cpu: FLAKE/INFRA
-  signature: runner setup / docker pull
-  action: rerun once; not blocking
-- (none PR-CAUSED)
+  签名: runner setup / docker pull
+  处理: 重跑一次；不作为合入阻断
+- 无 PR-CAUSED
+```
+
+若需回复作者，对应英文草稿示例：
+
+```text
+Intel CI attribution (not blocking):
+- pr-test-xpu / stage-b-test-1-gpu-xpu looks PRE-EXISTING — same signature on
+  main <url> and unrelated PR <url>.
+- pr-test-xeon failure looks infra/flake (docker/runner). A single rerun should
+  be enough; not treating this as a PR regression.
 ```

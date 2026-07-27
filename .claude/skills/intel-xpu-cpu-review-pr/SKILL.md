@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform impact in SGLang. Use when reviewing PRs that touch device dispatch, attention/quant/MoE/graph paths, Intel CI/Docker/deps, or when asked to review for XPU/CPU ownership. Run with /intel-xpu-cpu-review-pr <PR number>.
+description: Review a pull request for Intel XPU and CPU (AMX/Xeon) platform impact in SGLang. Explains PR logic in Chinese for the reviewer; drafts English GitHub comments when needed. Use when reviewing PRs that touch device dispatch, attention/quant/MoE/graph paths, Intel CI/Docker/deps, or when asked to review for XPU/CPU ownership. Run with /intel-xpu-cpu-review-pr <PR number>.
 ---
 
 # Intel XPU / CPU PR Review
@@ -25,6 +25,28 @@ Optional: `/intel-xpu-cpu-review-pr <PR number> --focus xpu|cpu|both` (default `
 
 When the user asks whether a red check is caused by the PR, run §14 (and the
 attribution reference) even if the code review is otherwise light.
+
+## Language (required)
+
+Bilingual by default — do not ask; just follow:
+
+| Audience | Language | What |
+|---|---|---|
+| **Reviewer (user)** | **中文** | PR 在做什么、Intel 影响、风险、CI 归因、是否该 approve — 用中文把逻辑讲清楚 |
+| **GitHub PR comment** | **English** | 准备贴到 PR 的 review / inline comment / 回复作者 — 必须是英文 |
+
+Rules:
+- The main review write-up the user reads is **Chinese**: summarize the PR's intent
+  and control flow, then Intel-specific findings. Prefer short paragraphs over
+  English checklist dumps.
+- Keep stable machine labels in English so they stay greppable:
+  `PR-CAUSED` / `PRE-EXISTING` / `FLAKE` / `INFRA` / `APPROVE` / …
+- Whenever a finding should be posted on the PR, also emit a ready-to-paste
+  **English** block (see §Output). Do not post comments unless the user asks;
+  just prepare the text.
+- If the user explicitly says `英文输出` / `English only`, switch the whole
+  review to English. If they say `只分析不写 comment`, skip the English paste
+  blocks.
 
 ## When this review applies
 
@@ -225,22 +247,49 @@ documented in the attribution section of the review.
 
 ## Output
 
-Lead with:
-1. **Intel impact**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
-2. **CI attribution** (required if any Intel check is red): per-job label +
-   one-line evidence (see reference doc snippet)
+Default language: **中文分析 + 英文 PR comment 草稿** (see §Language).
 
-Then per area:
-- ✅ PASS
-- ⚠️ ISSUE: \<what + where + suggested fix\>
-- 🔴 BLOCK: \<what + where + why it breaks Intel\>
+### A. 给 reviewer 的中文报告（主输出）
 
-Overall: **APPROVE** / **COMMENT** / **REQUEST CHANGES** / **BLOCKED**
+先用几句话说明 **这个 PR 在做什么**（动机、主路径、和 Intel 相关的部分），
+再给结论，避免一上来只有 checklist。
 
-If requesting changes, list the minimum CI evidence you want (e.g. green
-`pr-test-xpu` stage-b **after** confirming the prior red was PR-CAUSED, or a
-local AMX smoke command). Do not demand green Intel when attribution is
-PRE-EXISTING/FLAKE.
+1. **Intel 影响**: `none | docs-only | CPU | XPU | both | shared-SRT risk`
+2. **CI 归因**（任一 Intel check 为红时必填）: 每个 job 一个标签 + 一行证据
+3. **分项**:
+   - ✅ 通过: …
+   - ⚠️ 问题: \<哪里 + 为什么 + 建议\>
+   - 🔴 阻断: \<哪里 + 为什么会坏 Intel\>
+4. **总评**: `APPROVE` / `COMMENT` / `REQUEST CHANGES` / `BLOCKED`
+5. 若要改再合入：写明你要的最小 CI 证据（例如确认过是 PR-CAUSED 之后
+   `pr-test-xpu` stage-b 变绿，或本地 AMX smoke）。PRE-EXISTING / FLAKE
+   不要强求 Intel 全绿。
+
+### B. 给 GitHub 的英文 comment 草稿（需要评论时）
+
+对每一条需要对作者说的意见，附一段 **可直接粘贴** 的英文。按严重度分组：
+
+```markdown
+### Ready-to-paste PR comments (English)
+
+**[blocking]** `path/to/file.py`: …
+<details>
+<summary>suggested comment</summary>
+
+Intel XPU/CPU review: …
+
+</details>
+
+**[nit / question]** …
+```
+
+Inline 风格（指向具体文件/行为）优于空泛的 "please test on XPU"。
+CI 归因类 comment 用英文写清 label + evidence links，模板见
+[ci-failure-attribution.md](references/ci-failure-attribution.md) —
+但贴给作者前把说明句改成完整英文句子。
+
+**不要**自动 `gh pr comment` / 提交 review，除非用户明确说「帮我发到 PR」/
+「post the comment」。
 
 ## Related skills
 
