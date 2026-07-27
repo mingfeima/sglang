@@ -12,8 +12,10 @@ features Intel does not support yet?
 Path map, feature matrix, and CI suite details live in
 [references/platform-map.md](references/platform-map.md).
 **CI red ≠ PR bug** triage lives in
-[references/ci-failure-attribution.md](references/ci-failure-attribution.md) —
-defer to those rather than restating.
+[references/ci-failure-attribution.md](references/ci-failure-attribution.md).
+Model/op enabling vs CUDA/HIP wiring lives in
+[references/enabling-parity.md](references/enabling-parity.md).
+Defer to those rather than restating.
 
 ## Usage
 
