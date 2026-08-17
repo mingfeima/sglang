@@ -41,7 +41,7 @@ def setUpModule():
     raise unittest.SkipTest(_DEFER_REASON)
 
 
-register_cpu_ci(est_time=20, suite="base-a-test-cpu")
+register_cpu_ci(est_time=12, suite="base-a-test-cpu")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
