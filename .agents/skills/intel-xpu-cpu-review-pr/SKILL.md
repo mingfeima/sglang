@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership. For sglang: three pillars (other CI, enabling parity, perf/kernels). For sgl-kernel-xpu: perf (benchmarks required for opt PRs), simplify logic, FlashAttention/FlashInfer algorithm parity, and UT coverage updates. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu].
+description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership. For sglang: three pillars (other CI, enabling parity, perf/kernels). For sgl-kernel-xpu: perf (benchmarks required for opt PRs), simplify logic, FlashAttention/FlashInfer algorithm parity, and UT coverage updates. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
 ---
 
 # Intel XPU / CPU PR Review
