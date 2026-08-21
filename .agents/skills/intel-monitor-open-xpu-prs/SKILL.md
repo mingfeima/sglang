@@ -216,6 +216,10 @@ Use one row per PR:
 | [#123](url) | ... | @maintainer APPROVED, date | PASS, run link | PASS | Head SHA..., no pending checks |
 ```
 
+The `Title` column is required in every status table. Never omit or abbreviate
+the PR title, even when the reason already identifies the feature. Whenever a PR
+is mentioned outside a table, format it as `[#123](url) — <full PR title>`.
+
 Every reason must be concrete. Include as applicable:
 
 - approving reviewer, permission evidence, approval date, and whether approval
@@ -228,5 +232,6 @@ Every reason must be concrete. Include as applicable:
 - draft/conflict state.
 
 Never say only “CI red”, “needs review”, or “approved”. If a section is empty,
-write `None`. End with a short action summary listing PR numbers only, grouped by
-the next human action. Do not generate PR comments unless explicitly requested.
+write `None`. End with a short action summary grouped by the next human action;
+each entry must include both the linked PR number and full PR title. Do not
+generate PR comments unless explicitly requested.
