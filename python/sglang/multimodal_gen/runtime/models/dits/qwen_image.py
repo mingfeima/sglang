@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import functools
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -24,6 +25,8 @@ from sglang.kernels.ops.diffusion import (
     fused_linear_gelu_tanh,
     is_plain_layer_norm,
     mark_fused_gelu_site,
+    mark_qwen_image_added_qkv_site,
+    qwen_image_added_qkv_active,
     try_fused_bias_mul_add,
     try_fused_bias_scale_residual_norm_scale_shift,
     try_fused_norm_scale_shift_fp8,
@@ -70,6 +73,7 @@ from sglang.multimodal_gen.runtime.layers.linear import (
     MergedColumnParallelLinear,
     ReplicatedLinear,
     RowParallelLinear,
+    apply_unquantized_linear,
 )
 from sglang.multimodal_gen.runtime.layers.quantization.configs.base_config import (
     QuantizationConfig,
@@ -192,6 +196,25 @@ def _local_seq_len(seq_len: int, sp_world_size: int) -> int:
 
 
 _get_qkv_projections = get_qkv_projections
+
+
+def _split_unquantized_merged_linear(
+    linear: MergedColumnParallelLinear, x: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Apply a packed Q/K/V weight as three reference linear projections."""
+    sizes = linear.output_partition_sizes
+    if len(sizes) != 3:
+        raise ValueError(f"Expected three packed projection shards, got {sizes}")
+    weights = linear.weight.split(sizes, dim=0)
+    biases = (
+        linear.bias.split(sizes, dim=0)
+        if linear.bias is not None
+        else (None, None, None)
+    )
+    return tuple(
+        apply_unquantized_linear(x, weight, bias)
+        for weight, bias in zip(weights, biases)
+    )
 
 
 def _can_defer_modelopt_output_bias(
@@ -728,10 +751,18 @@ class QwenImageCrossAttention(nn.Module):
         self.prefix = prefix
         self.defer_output_bias = _defer_modelopt_output_bias(quant_config)
         quant_name = _modelopt_quant_name(quant_config)
+        capability = current_platform.get_device_capability()
         self.use_fused_qkv_epilogue = quant_name in {
             "modelopt_fp4",
             "modelopt_fp8",
-        }
+        } or (
+            quant_config is None
+            and current_platform.is_cuda()
+            and capability is not None
+            and capability.major == 9
+            and os.getenv("SGLANG_ENABLE_FUSED_QKNORM_ROPE", "1").lower()
+            not in {"0", "false", "off", "no"}
+        )
         self.use_fused_qkv = (
             isinstance(quant_config, NunchakuConfig) or quant_name == "modelopt_fp8"
         )
@@ -740,10 +771,11 @@ class QwenImageCrossAttention(nn.Module):
         self.inner_kv_dim = self.inner_dim
 
         tp_size = get_tp_world_size()
-        assert (
-            self.num_heads % tp_size == 0
-        ), f"num_heads ({self.num_heads}) must be divisible by tp_size ({tp_size})"
+        assert self.num_heads % tp_size == 0, (
+            f"num_heads ({self.num_heads}) must be divisible by tp_size ({tp_size})"
+        )
         self.local_num_heads = self.num_heads // tp_size
+        self._unquantized_added_qkv_is_packed = False
 
         if self.use_fused_qkv:
             # Use fused QKV projection for nunchaku quantization
@@ -785,8 +817,11 @@ class QwenImageCrossAttention(nn.Module):
             self.norm_k = RMSNorm(head_dim, eps=eps) if qk_norm else nn.Identity()
 
         if added_kv_proj_dim is not None:
+            self._unquantized_added_qkv_is_packed = quant_config is None
             self.use_fused_added_qkv = (
-                isinstance(quant_config, NunchakuConfig) or quant_name == "modelopt_fp8"
+                self._unquantized_added_qkv_is_packed
+                or isinstance(quant_config, NunchakuConfig)
+                or quant_name == "modelopt_fp8"
             )
             if self.use_fused_added_qkv:
                 self.to_added_qkv = MergedColumnParallelLinear(
@@ -796,6 +831,10 @@ class QwenImageCrossAttention(nn.Module):
                     quant_config=quant_config,
                     prefix=f"{prefix}.to_added_qkv",
                 )
+                if self._unquantized_added_qkv_is_packed:
+                    # Packing changes BF16 GEMM reduction association. Keep it
+                    # off for lossless and mount it at extra-high or high.
+                    mark_qwen_image_added_qkv_site(self)
             else:
                 self.add_q_proj = ColumnParallelLinear(
                     added_kv_proj_dim,
@@ -869,8 +908,28 @@ class QwenImageCrossAttention(nn.Module):
                 AttentionBackendEnum.TORCH_SDPA,
                 AttentionBackendEnum.SAGE_ATTN,
                 AttentionBackendEnum.SAGE_ATTN_3,
+                AttentionBackendEnum.SPARGE_ATTN,
             },
         )
+
+    def _get_added_qkv_projections(
+        self, encoder_hidden_states: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.use_fused_added_qkv:
+            if (
+                self._unquantized_added_qkv_is_packed
+                and not qwen_image_added_qkv_active(self)
+            ):
+                return _split_unquantized_merged_linear(
+                    self.to_added_qkv, encoder_hidden_states
+                )
+            added_qkv, _ = self.to_added_qkv(encoder_hidden_states)
+            return tuple(t.contiguous() for t in added_qkv.chunk(3, dim=-1))
+
+        encoder_query, _ = self.add_q_proj(encoder_hidden_states)
+        encoder_key, _ = self.add_k_proj(encoder_hidden_states)
+        encoder_value, _ = self.add_v_proj(encoder_hidden_states)
+        return encoder_query, encoder_key, encoder_value
 
     def forward(
         self,
@@ -901,19 +960,37 @@ class QwenImageCrossAttention(nn.Module):
         # Rows of tail padding inside THIS rank's text chunk (sp_shard meta).
         sp_txt_pad = _attn_mask_meta_local_pad(attn_mask_meta)
 
-        (
-            img_query,
-            img_key,
-            img_value,
-            txt_query,
-            txt_key,
-            txt_value,
-        ) = _get_qkv_projections(
-            self,
-            hidden_states,
-            encoder_hidden_states,
-            make_contiguous=not self.use_fused_qkv_epilogue,
-        )
+        if self._unquantized_added_qkv_is_packed and not qwen_image_added_qkv_active(
+            self
+        ):
+            img_query, img_key, img_value, _, _, _ = _get_qkv_projections(
+                self,
+                hidden_states,
+                make_contiguous=not self.use_fused_qkv_epilogue,
+            )
+            txt_query, txt_key, txt_value = self._get_added_qkv_projections(
+                encoder_hidden_states
+            )
+        else:
+            (
+                img_query,
+                img_key,
+                img_value,
+                txt_query,
+                txt_key,
+                txt_value,
+            ) = _get_qkv_projections(
+                self,
+                hidden_states,
+                encoder_hidden_states,
+                make_contiguous=not self.use_fused_qkv_epilogue,
+            )
+
+        freqs_complex = cross_attention_kwargs.get("freqs_complex")
+        if freqs_complex is not None:
+            img_complex, txt_complex = freqs_complex
+        else:
+            img_complex = txt_complex = None
 
         # Reshape for multi-head attention
         img_query = img_query.unflatten(-1, (self.local_num_heads, self.head_dim))
@@ -942,6 +1019,10 @@ class QwenImageCrossAttention(nn.Module):
             and txt_cache is not None
             and not sp_text_sharded
             and sp_txt_pad == 0
+            # Masked attention packs the image and text segments separately.
+            # Its prefix tensors must go through the ordinary normalization.
+            and attn_mask is None
+            and encoder_hidden_states_mask is None
         ):
             joint_qkv = try_fused_qwen_qkv_epilogue(
                 img_query,
@@ -978,6 +1059,7 @@ class QwenImageCrossAttention(nn.Module):
                     k_norm=self.norm_k,
                     head_dim=self.head_dim,
                     cos_sin_cache=img_cache,
+                    freqs_complex=img_complex,
                     is_neox=False,
                     allow_inplace=True,
                 )
@@ -988,6 +1070,7 @@ class QwenImageCrossAttention(nn.Module):
                     k_norm=self.norm_added_k,
                     head_dim=self.head_dim,
                     cos_sin_cache=txt_cache,
+                    freqs_complex=txt_complex,
                     is_neox=False,
                     allow_inplace=True,
                 )
@@ -1001,6 +1084,17 @@ class QwenImageCrossAttention(nn.Module):
 
         # Joint order [text, image]; join_seqs relocates any SP text tail-pad
         # behind the image (see sp_shard.join_seqs for why).
+        if attn_mask is None and encoder_hidden_states_mask is not None:
+            image_mask = torch.ones(
+                (hidden_states.shape[0], img_query.shape[1]),
+                device=encoder_hidden_states_mask.device,
+                dtype=torch.bool,
+            )
+            attn_mask = torch.cat(
+                [encoder_hidden_states_mask.to(dtype=torch.bool), image_mask],
+                dim=1,
+            )
+
         seg_qkv = None
         # The segmented pre-all-to-all emits Ulysses layout; K/V-gather takes
         # the join_seqs path and exchanges inside the attention instead.
@@ -1022,20 +1116,15 @@ class QwenImageCrossAttention(nn.Module):
             joint_query, joint_key, joint_value = joint_qkv
         elif seg_qkv is not None:
             joint_query, joint_key, joint_value = seg_qkv
+        elif attn_mask is not None and not sp_text_sharded:
+            # Let the eager attention break point pack directly from the text
+            # and image segments. Materializing three dense joint tensors here
+            # only to gather their valid rows again wastes one launch per Q/K/V.
+            joint_query, joint_key, joint_value = img_query, img_key, img_value
         else:
             joint_query = join_seqs(txt_query, img_query, sp_txt_pad)
             joint_key = join_seqs(txt_key, img_key, sp_txt_pad)
             joint_value = join_seqs(txt_value, img_value, sp_txt_pad)
-        if attn_mask is None and encoder_hidden_states_mask is not None:
-            image_mask = torch.ones(
-                (hidden_states.shape[0], img_query.shape[1]),
-                device=encoder_hidden_states_mask.device,
-                dtype=torch.bool,
-            )
-            attn_mask = torch.cat(
-                [encoder_hidden_states_mask.to(dtype=torch.bool), image_mask],
-                dim=1,
-            )
 
         # Compute joint attention
         joint_hidden_states = self.attn(
@@ -1046,6 +1135,15 @@ class QwenImageCrossAttention(nn.Module):
             attn_mask_meta=attn_mask_meta,
             num_replicated_prefix=0 if sp_text_sharded else seq_len_txt,
             qkv_pre_all_to_all=seg_qkv is not None,
+            q_prefix=(
+                txt_query if attn_mask is not None and not sp_text_sharded else None
+            ),
+            k_prefix=(
+                txt_key if attn_mask is not None and not sp_text_sharded else None
+            ),
+            v_prefix=(
+                txt_value if attn_mask is not None and not sp_text_sharded else None
+            ),
         )
 
         # Reshape back
@@ -1094,7 +1192,7 @@ class QwenImageGELU(nn.Module):
                 quant_config=quant_config,
                 prefix=f"{prefix}.proj",
             )
-        # quality="high" fusion site: up-proj GEMM + tanh-GELU in the cublasLt
+        # Extra-high-or-higher fusion site: up-proj GEMM + tanh-GELU in cublasLt
         # epilogue. Off by default; mounted per batch by the denoising stage.
         mark_fused_gelu_site(self, "proj")
 
@@ -2195,6 +2293,7 @@ class QwenImageTransformer2DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
         txt_seq_lens: Optional[List[int]] = None,
         freqs_cis: tuple[torch.Tensor, torch.Tensor] = None,
+        freqs_complex: tuple[torch.Tensor, torch.Tensor] = None,
         additional_t_cond: Optional[torch.Tensor] = None,
         guidance: torch.Tensor = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -2313,6 +2412,9 @@ class QwenImageTransformer2DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
             if freqs_cis is not None:
                 img_cache, txt_cache = freqs_cis
                 freqs_cis = (img_cache, shard_like(txt_cache, txt_shard, dim=0))
+            if freqs_complex is not None:
+                img_complex, txt_complex = freqs_complex
+                freqs_complex = (img_complex, shard_like(txt_complex, txt_shard, dim=0))
             tail_meta = tail_attn_meta(
                 txt_shard,
                 encoder_hidden_states.shape[0],
@@ -2335,6 +2437,9 @@ class QwenImageTransformer2DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
             temb_txt_silu = temb_img_silu
 
         image_rotary_emb = freqs_cis
+        if freqs_complex is not None:
+            block_attention_kwargs["freqs_complex"] = freqs_complex
+
         for index_block, block in enumerate(self.transformer_blocks):
             encoder_hidden_states, hidden_states = block(
                 hidden_states=hidden_states,
