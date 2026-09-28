@@ -333,6 +333,15 @@ Review asks:
 - Changed Intel path → existing Xeon/XPU jobs still cover it; add a focused test if not
 - **If existing tests cannot cover the change → update/add UT in the same PR**
   (kernel math, new op, new backend path). Do not merge on “manual smoke only”.
+- For each new or changed `register_xpu_ci` / `register_cpu_ci`, verify the file
+  matches the workflow path filter, the registration selects a job's actual
+  suite, and its top-level import chain is available in that platform's CI
+  image (check platform dependencies). A registration alone is not execution.
+- Check the target job and test-file results on the PR head, not just the
+  workflow conclusion. If a gate, path filter, or skipped job prevents the
+  test from running, mark that test **NOT VERIFIED**; require a rerun or
+  equivalent import-and-test evidence from the same platform environment
+  before treating the new registration as validated.
 - Do not put `register_*_ci` under `python/sglang/` (pre-commit rejects it)
 - Prefer small models already used on Intel CI (see `test/registered/{cpu,xpu}/`)
 - Path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost all
@@ -372,6 +381,14 @@ For each failed job, assign exactly one label:
 | **FLAKE / INFRA** | Timeout, runner, Docker, device init, cancelled job; or pass on rerun same SHA | No — suggest rerun |
 | **UNKNOWN** | Cannot decide | Soft hold on CUDA/other; on Intel, one rerun + residual risk note |
 
+**NOT VERIFIED** is a separate coverage status, not a failure-attribution
+label. When a target test did not run, state which test/suite was missed,
+the concrete reason (gate, filter, cancellation, or skipped job), link the
+job/filter evidence, and say what rerun or equivalent platform-environment
+evidence would resolve it. Do not infer "no CI regression" from a passing
+workflow if the PR's new registration was not exercised. An INFRA gate can
+be non-PR-caused while the new test remains NOT VERIFIED.
+
 Fast path:
 1. Extract **signature**: job name + test id + error class + one message line.
 2. Compare to recent `main` / unrelated PR runs of the **same workflow**.
@@ -401,6 +418,7 @@ Default: **短中文 + 短英文草稿**（见 §Language）。默认偏短，�
 
 ## 支柱/焦点
 - 其他 CI: …
+- Intel CI: …       # 未运行的目标测试标 NOT VERIFIED，附原因、证据与解除条件
 - 对齐: …          # enabling 才写
 - 性能/kernel: …   # 落点 + bench有无 + UT有无
 - （kernel-xpu）化简 / FA对照: …
