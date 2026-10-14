@@ -14,6 +14,13 @@ Goal: label each failed job as one of:
 | **FLAKE / INFRA** | Timeout, runner, Docker, OOM, device lost, checkout | Suggest `/rerun-failed-ci`; do not block unless persistent |
 | **UNKNOWN** | Cannot decide with available logs | Ask for one rerun + note residual risk; optionally bisect |
 
+**Merge readiness is a separate question from failure attribution.** A missing
+`run-ci` label or a gate, filter, cancellation, or infrastructure failure that
+prevents relevant tests from starting is **NOT VERIFIED — DO NOT MERGE**, even
+when its failure is not PR-caused. Link the job/gate, name the missing test,
+and require a new eligible run on the latest PR head. Do not count an
+intentionally skipped, unrelated workflow as missing coverage.
+
 ## Priority reminder
 
 **Breaking other platforms' CI (esp. CUDA) outranks Intel completeness.**
@@ -153,8 +160,9 @@ Block (or request changes) even on a flaky fleet if:
 3. Failure is in a brand-new job/suite the PR introduced, or
 4. Diff clearly breaks import of shared SRT on CPU/XPU (collectible without GPU)
 
-Otherwise: approve/comment with an explicit **CI attribution** line so the author
-and other reviewers do not thrash on endemic reds.
+Otherwise: approve/comment with an explicit **CI attribution** line only after
+relevant tests have actually run on the latest head. If they did not run,
+report **NOT VERIFIED — DO NOT MERGE** and the unblock action instead.
 
 ## Output snippet (paste into the Chinese review; English version for the author)
 

@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership. For sglang: three pillars (other CI, enabling parity, perf/kernels). For sgl-kernel-xpu: perf (benchmarks required for opt PRs), simplify logic, FlashAttention/FlashInfer algorithm parity, and UT coverage updates. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
+description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including run-ci labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
 ---
 
 # Intel XPU / CPU PR Review
@@ -52,6 +52,29 @@ Detect automatically from the PR URL / `--repo`. If unclear, ask once.
 
 When the user asks whether a red check is caused by the PR (sglang tree), run §14
 even if the code review is otherwise light.
+
+### Merge-readiness gate (both repos)
+
+Before any `APPROVE` or merge-ready verdict, check the latest PR head SHA, required
+CI workflows, and the **actual test jobs and test files** relevant to the diff.
+Workflow startup, lint success, a green finish job with skipped tests, or manual
+accuracy results do not prove those tests ran.
+
+- Missing `run-ci` (or another required CI opt-in label), a failing PR/rebase/
+  maintenance gate, path-filtered or skipped target job, cancellation, or setup/
+  runner failure before tests → **`NOT VERIFIED — DO NOT MERGE`**. Name the
+  missed suite/test, why it did not run, and link the gate/job evidence. Tell
+  the reviewer explicitly **不能 merge** and set the overall verdict to
+  **BLOCKED**, even when the failure is not PR-caused.
+- State the unblock action: add the required label and trigger a **new** run,
+  rebase/fix the gate, fix the path filter or registration, or rerun after
+  infrastructure recovery. Require the relevant tests to execute on the
+  latest head before changing this verdict; a rerun of a label-skipped event
+  cannot make its frozen event payload eligible.
+- Apply this gate to **required coverage of the changed paths**, not every
+  unrelated optional workflow or intentionally skipped test. `PRE-EXISTING`
+  failures in tests that *did run* are attributed under §14; they are not the
+  same as missing CI coverage.
 
 ## Language (required)
 
@@ -113,6 +136,9 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 2. `gh pr diff <N> --repo sgl-project/sglang`
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
    and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
+3a. Apply the merge-readiness gate above: verify required labels, gates and
+    relevant test-job execution on the latest head. Missing execution is
+    **NOT VERIFIED — DO NOT MERGE**, not a passing or flaky test.
 4. **Other-CI gate (pillar 1):** list failed checks on CUDA / main `pr-test.yml`
    (and AMD if present). Attribute each with §14. Any **PR-CAUSED** failure
    outside Intel → **BLOCK** immediately.
@@ -139,8 +165,9 @@ Highest bar — ahead of Intel feature completeness.
   Docker/CI scripts → explicitly check CUDA / kernel CI, not only Xeon/XPU.
 - Diff that widens a type/shape/API used by CUDA kernels "for Intel" without a
   CUDA test update is suspicious — require CUDA CI green or a clear revert plan.
-- **Verdict required in every review:** `other-CI: PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK`.
-  Only `PR-CAUSED-BLOCK` on non-Intel jobs blocks the PR from an Intel-owner review.
+- **Verdict required in every review:** `other-CI: PASS | PRE-EXISTING-red | PR-CAUSED-BLOCK | NOT-VERIFIED-BLOCK`.
+  `PR-CAUSED-BLOCK` is a code regression; `NOT-VERIFIED-BLOCK` means required
+  non-Intel tests never ran. Neither is merge-ready.
 
 How to check quickly:
 
@@ -339,9 +366,10 @@ Review asks:
   image (check platform dependencies). A registration alone is not execution.
 - Check the target job and test-file results on the PR head, not just the
   workflow conclusion. If a gate, path filter, or skipped job prevents the
-  test from running, mark that test **NOT VERIFIED**; require a rerun or
-  equivalent import-and-test evidence from the same platform environment
-  before treating the new registration as validated.
+  test from running, mark that test **NOT VERIFIED — DO NOT MERGE**; require
+  the target CI to run on the latest head before treating the registration
+  as validated. Do not substitute a manually reported smoke test for
+  label-gated or otherwise skipped required CI.
 - Do not put `register_*_ci` under `python/sglang/` (pre-commit rejects it)
 - Prefer small models already used on Intel CI (see `test/registered/{cpu,xpu}/`)
 - Path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost all
@@ -384,10 +412,11 @@ For each failed job, assign exactly one label:
 **NOT VERIFIED** is a separate coverage status, not a failure-attribution
 label. When a target test did not run, state which test/suite was missed,
 the concrete reason (gate, filter, cancellation, or skipped job), link the
-job/filter evidence, and say what rerun or equivalent platform-environment
-evidence would resolve it. Do not infer "no CI regression" from a passing
-workflow if the PR's new registration was not exercised. An INFRA gate can
-be non-PR-caused while the new test remains NOT VERIFIED.
+job/filter evidence, and say what new run on the latest head would resolve it.
+Report **NOT VERIFIED — DO NOT MERGE** explicitly. Do not infer "no CI
+regression" from a passing workflow if the PR's new registration was not
+exercised. An INFRA gate can be non-PR-caused while required coverage still
+blocks merging; `FLAKE / INFRA` is not permission to merge when no tests ran.
 
 Fast path:
 1. Extract **signature**: job name + test id + error class + one message line.
@@ -401,8 +430,9 @@ Bias: on **Intel**, assume PRE-EXISTING/FLAKE until overlap is clear; if the PR
 On **CUDA / other devices**, bias toward PR-CAUSED when the diff touches shared
 SRT and the signature is new vs base/`main`.
 
-Do **not** require green Intel CI as a blanket gate when endemic failures are
-documented — but **do** require not newly breaking other CI.
+Do **not** require green Intel CI as a blanket gate when tests actually ran
+and endemic failures are documented — but **do** require relevant CI tests to
+run and not newly break other CI.
 
 ## Output
 
@@ -414,11 +444,12 @@ Default: **短中文 + 短英文草稿**（见 §Language）。默认偏短，�
 
 ```text
 ## 摘要
-<1–3 句：PR 做什么 + 总评 APPROVE|COMMENT|REQUEST CHANGES|BLOCKED>
+<1–3 句：PR 做什么 + 总评 APPROVE|COMMENT|REQUEST CHANGES|BLOCKED；
+如相关 CI 没跑，明确写 NOT VERIFIED — DO NOT MERGE / 不能 merge>
 
 ## 支柱/焦点
-- 其他 CI: …
-- Intel CI: …       # 未运行的目标测试标 NOT VERIFIED，附原因、证据与解除条件
+- 其他 CI: …         # 未运行的必需测试标 NOT-VERIFIED-BLOCK
+- Intel CI: …        # 未运行的目标测试标 NOT VERIFIED — DO NOT MERGE，附原因、证据与解除条件
 - 对齐: …          # enabling 才写
 - 性能/kernel: …   # 落点 + bench有无 + UT有无
 - （kernel-xpu）化简 / FA对照: …
