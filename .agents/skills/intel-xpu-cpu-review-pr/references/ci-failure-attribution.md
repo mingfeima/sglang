@@ -16,10 +16,11 @@ Goal: label each failed job as one of:
 
 **Merge readiness is a separate question from failure attribution.** A missing
 `run-ci` label or a gate, filter, cancellation, or infrastructure failure that
-prevents relevant tests from starting is **NOT VERIFIED — DO NOT MERGE**, even
-when its failure is not PR-caused. Link the job/gate, name the missing test,
-and require a new eligible run on the latest PR head. Do not count an
-intentionally skipped, unrelated workflow as missing coverage.
+prevents required PR tests from starting is **NOT VERIFIED — DO NOT MERGE**,
+even when its failure is not PR-caused. Link the job/gate, name the missing
+test, and require a new eligible run on the latest PR head. Nightly-only tests
+that did not run on the PR head are **NIGHTLY NOT RUN**, not a merge blocker
+by themselves; do not claim they passed in CI.
 
 ## Priority reminder
 
@@ -161,8 +162,10 @@ Block (or request changes) even on a flaky fleet if:
 4. Diff clearly breaks import of shared SRT on CPU/XPU (collectible without GPU)
 
 Otherwise: approve/comment with an explicit **CI attribution** line only after
-relevant tests have actually run on the latest head. If they did not run,
-report **NOT VERIFIED — DO NOT MERGE** and the unblock action instead.
+required PR tests have actually run on the latest head. If required PR tests
+did not run, report **NOT VERIFIED — DO NOT MERGE** and the unblock action.
+If only nightly tests did not run, report **NIGHTLY NOT RUN** without blocking
+solely on their absence.
 
 ## Output snippet (paste into the Chinese review; English version for the author)
 

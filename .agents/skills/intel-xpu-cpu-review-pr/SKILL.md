@@ -56,7 +56,7 @@ even if the code review is otherwise light.
 ### Merge-readiness gate (both repos)
 
 Before any `APPROVE` or merge-ready verdict, check the latest PR head SHA, required
-CI workflows, and the **actual test jobs and test files** relevant to the diff.
+PR CI workflows, and the **actual test jobs and test files** relevant to the diff.
 Workflow startup, lint success, a green finish job with skipped tests, or manual
 accuracy results do not prove those tests ran.
 
@@ -74,10 +74,14 @@ accuracy results do not prove those tests ran.
   infrastructure recovery. Require the relevant tests to execute on the
   latest head before changing this verdict; a rerun of a label-skipped event
   cannot make its frozen event payload eligible.
-- Apply this gate to **required coverage of the changed paths**, not every
-  unrelated optional workflow or intentionally skipped test. `PRE-EXISTING`
-  failures in tests that *did run* are attributed under §14; they are not the
-  same as missing CI coverage.
+- Apply this gate to **required PR CI coverage of the changed paths**, not
+  optional nightly suites or intentionally skipped tests. If a changed test
+  runs only in nightly, report **NIGHTLY NOT RUN** with its suite and any local
+  evidence; do **not** block the PR solely because nightly did not run on the
+  PR head. Do not claim the test passed in CI. A nightly test that *did* run
+  and fails due to the PR is still `PR-CAUSED` under §14. `PRE-EXISTING`
+  failures in tests that *did run* are attributed under §14, not treated as
+  missing CI coverage.
 
 ## Language (required)
 
@@ -151,8 +155,9 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
    and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
 3a. Apply the merge-readiness gate above: verify required labels, gates and
-    relevant test-job execution on the latest head. Missing execution is
-    **NOT VERIFIED — DO NOT MERGE**, not a passing or flaky test.
+    required PR test-job execution on the latest head. Missing required PR
+    execution is **NOT VERIFIED — DO NOT MERGE**; absent nightly execution
+    alone is **NIGHTLY NOT RUN** and non-blocking.
 4. **Other-CI gate (pillar 1):** list failed checks on CUDA / main `pr-test.yml`
    (and AMD if present). Attribute each with §14. Any **PR-CAUSED** failure
    outside Intel → **BLOCK** immediately.
@@ -378,12 +383,13 @@ Review asks:
   matches the workflow path filter, the registration selects a job's actual
   suite, and its top-level import chain is available in that platform's CI
   image (check platform dependencies). A registration alone is not execution.
-- Check the target job and test-file results on the PR head, not just the
-  workflow conclusion. If a gate, path filter, or skipped job prevents the
-  test from running, mark that test **NOT VERIFIED — DO NOT MERGE**; require
-  the target CI to run on the latest head before treating the registration
-  as validated. Do not substitute a manually reported smoke test for
-  label-gated or otherwise skipped required CI.
+- Check required PR CI target jobs and test-file results on the PR head, not
+  just the workflow conclusion. If a gate, path filter, or skipped job
+  prevents a required PR test from running, mark it **NOT VERIFIED — DO NOT
+  MERGE**; require a new eligible run before treating the registration as
+  validated. For nightly-only registrations, report **NIGHTLY NOT RUN**
+  without blocking solely on absent nightly execution. Local smoke results
+  do not prove nightly CI passed or replace skipped required PR CI.
 - Do not put `register_*_ci` under `python/sglang/` (pre-commit rejects it)
 - Prefer small models already used on Intel CI (see `test/registered/{cpu,xpu}/`)
 - Path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost all
@@ -424,13 +430,13 @@ For each failed job, assign exactly one label:
 | **UNKNOWN** | Cannot decide | Soft hold on CUDA/other; on Intel, one rerun + residual risk note |
 
 **NOT VERIFIED** is a separate coverage status, not a failure-attribution
-label. When a target test did not run, state which test/suite was missed,
+label. When a required PR test did not run, state which test/suite was missed,
 the concrete reason (gate, filter, cancellation, or skipped job), link the
 job/filter evidence, and say what new run on the latest head would resolve it.
-Report **NOT VERIFIED — DO NOT MERGE** explicitly. Do not infer "no CI
-regression" from a passing workflow if the PR's new registration was not
-exercised. An INFRA gate can be non-PR-caused while required coverage still
-blocks merging; `FLAKE / INFRA` is not permission to merge when no tests ran.
+Report **NOT VERIFIED — DO NOT MERGE** explicitly. For nightly-only tests not
+run on the PR head, report **NIGHTLY NOT RUN** and do not block on that alone;
+do not infer a nightly pass from PR CI or local runs. An INFRA gate can be
+non-PR-caused while required PR coverage still blocks merging.
 
 Fast path:
 1. Extract **signature**: job name + test id + error class + one message line.
@@ -459,12 +465,14 @@ Default: **短中文 + 短英文草稿**（见 §Language）。默认偏短，�
 ```text
 ## 摘要
 <1–3 句：PR 做什么 + 总评 APPROVE|COMMENT|REQUEST CHANGES|BLOCKED；
-如相关 CI 没跑，明确写 NOT VERIFIED — DO NOT MERGE / 不能 merge>
+如必需 PR CI 没跑，明确写 NOT VERIFIED — DO NOT MERGE / 不能 merge；
+仅 nightly 没跑则标 NIGHTLY NOT RUN，不因此 BLOCKED>
 
 ## 支柱/焦点
 - 标题: PASS | FAIL | NOT VERIFIED  # 以当前标题及最新 title check 为准
 - 其他 CI: …         # 未运行的必需测试标 NOT-VERIFIED-BLOCK
-- Intel CI: …        # 未运行的目标测试标 NOT VERIFIED — DO NOT MERGE，附原因、证据与解除条件
+- Intel CI: …        # 必需 PR 测试未运行标 NOT VERIFIED — DO NOT MERGE；
+                     # 仅 nightly 未运行标 NIGHTLY NOT RUN，不单独阻断
 - 对齐: …          # enabling 才写
 - 性能/kernel: …   # 落点 + bench有无 + UT有无
 - （kernel-xpu）化简 / FA对照: …
