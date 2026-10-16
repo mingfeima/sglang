@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including run-ci labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
+description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including PR title validity, run-ci labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
 ---
 
 # Intel XPU / CPU PR Review
@@ -60,6 +60,9 @@ CI workflows, and the **actual test jobs and test files** relevant to the diff.
 Workflow startup, lint success, a green finish job with skipped tests, or manual
 accuracy results do not prove those tests ran.
 
+- Check the current title and newest required title check (if any). A failed
+  title check blocks merging but is not a code/device regression; title edits
+  do not change the head SHA, so ignore older failures after a passing rerun.
 - Missing `run-ci` (or another required CI opt-in label), a failing PR/rebase/
   maintenance gate, path-filtered or skipped target job, cancellation, or setup/
   runner failure before tests → **`NOT VERIFIED — DO NOT MERGE`**. Name the
@@ -124,7 +127,8 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 
 ### A. sgl-kernel-xpu repo (light)
 
-1. `gh pr view/diff <N> --repo sgl-project/sgl-kernel-xpu`
+1. `gh pr view/diff <N> --repo sgl-project/sgl-kernel-xpu`; check its title
+   gate if any, without imposing sglang's title syntax.
 2. Follow **only** [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md):
    **性能（优化 PR 必须有 benchmark）→ 能否化简 →（attention）FA/FlashInfer
    并行维·tile·数学等价 → UT 是否覆盖改动（不够就补）**
@@ -133,6 +137,16 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 ### B. sglang repo (full)
 
 1. `gh pr view <N> --repo sgl-project/sglang --json title,body,files,author,baseRefName,headRefName,labels,commits,reviews,statusCheckRollup`
+1a. Check the **current title** and newest `PR Title / Check PR title` run;
+    `.github/workflows/pr-title.yml` on `main` is the source of truth.
+    Format: `[Type] scope: title` or `[Type] [Hardware] scope: title`; Type is
+    `Feat|Fix|Refactor|Perf|Doc|Test|CI|Chore`; scope/title required, exact
+    spaces, no outer whitespace. Hardware is uppercase except `Intel`, `Apple`,
+    `Huawei`, `Ascend`; `Revert "original title"` is valid. Invalid/current
+    failed check → **title: FAIL — BLOCKED** (link it, suggest a valid title).
+    Title edits leave the head SHA unchanged: ignore old failures after a new
+    pass; without a completed check for the edited title report
+    **title: NOT VERIFIED — DO NOT MERGE**.
 2. `gh pr diff <N> --repo sgl-project/sglang`
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
    and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
@@ -448,6 +462,7 @@ Default: **短中文 + 短英文草稿**（见 §Language）。默认偏短，�
 如相关 CI 没跑，明确写 NOT VERIFIED — DO NOT MERGE / 不能 merge>
 
 ## 支柱/焦点
+- 标题: PASS | FAIL | NOT VERIFIED  # 以当前标题及最新 title check 为准
 - 其他 CI: …         # 未运行的必需测试标 NOT-VERIFIED-BLOCK
 - Intel CI: …        # 未运行的目标测试标 NOT VERIFIED — DO NOT MERGE，附原因、证据与解除条件
 - 对齐: …          # enabling 才写
