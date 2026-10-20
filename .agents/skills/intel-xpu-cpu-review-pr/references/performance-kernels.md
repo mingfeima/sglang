@@ -50,6 +50,51 @@ PRs **inside** sgl-kernel-xpu use the lighter review:
 - Falling back to `triton` / native when `intel_xpu` / AMX was supposed to run
   (silent perf cliff)
 
+### XPU CPU/device synchronization (required for every XPU PR)
+
+Check changed Python wrappers, shared callers, and SYCL/C++ kernels, not only
+PRs claiming a speedup. Trace each suspicious value's device and consumers;
+report concrete file/line evidence, frequency (once per batch vs every layer,
+decode step, or request), and whether the PR adds the cost relative to baseline.
+
+| Pattern | What to verify |
+|---|---|
+| `int(t)`, `float(t)`, `bool(t)`, `.item()`, or a Python `if` on a device tensor | Extracting a device scalar for host control flow requires its value on the host and synchronization. `int(cu_seqlens[-1])` is a typical hidden D2H; indexing `cu_seqlens[-1]` alone is not. |
+| `.cpu()`, `.to("cpu")`, `.tolist()`, device data used in logging/assertions | Host transfer and when the CPU actually consumes the result; do not assume an asynchronous copy eliminates a later wait. |
+| `q[valid]`, `masked_select`, `nonzero`, or other data-dependent output shapes | Boolean compaction commonly needs a device-computed count on the host to allocate its output. Check the actual XPU implementation/version rather than asserting that every indexing operation synchronizes. Inspect masked scatter separately. |
+| `torch.xpu.synchronize()`, stream/event synchronization, SYCL queue/event `.wait()` / `.wait_and_throw()`, blocking copies | Whether the wait is necessary for correctness or unnecessarily serializes work; distinguish host waits from device-side event dependencies. Do not remove required ordering. |
+
+`q.shape[0]`, `.numel()`, and fixed-size tensor views normally read host metadata,
+not device values. GPU-only subtraction/comparison to build a mask is not by
+itself a host read. Avoid false positives based only on API spelling.
+
+**Padded attention example:** comparing `q.shape[0]` with
+`int(cu_seqlens[-1])` adds a scalar read even for an unpadded multi-image batch.
+On the padded branch, `q[valid]`, `k[valid]`, and `v[valid]` add dynamic
+compaction, allocations and memory traffic, followed by output scatter.
+Removing only `int()` does not resolve the entire performance concern.
+
+**SYCL Graph is not an automatic fix:**
+- Separate Python/dispatch/launch savings from host reads, dynamic allocation,
+  and device memory traffic. Device-dependent host branching or output shapes
+  may be unsupported during capture; verify the exact implementation.
+- Check per-replay work outside capture: a scalar read before each replay
+  still synchronizes. Successful capture alone is not evidence of no overhead.
+- Ask for capture/replay validation and an XPU trace or before/after measurement
+  covering the affected path (e.g. mixed image lengths and multiple layers).
+  Use host wall-clock timing with appropriate boundary synchronization as well
+  as device timing; device-only kernel timings can miss host stalls.
+
+Prefer preparing lengths/indices once outside the layer loop (from existing
+host metadata where possible), fixed-size `index_select`/scatter with reusable
+buffers, or padded offsets plus device lengths when the backend supports them.
+These are alternatives to validate, not universal fixes: preserve padding/output
+semantics and check graph shape/address constraints and kernel limitations.
+
+Report confirmed avoidable hot-path synchronization as a performance finding
+even without a speedup claim. Request evidence when backend behavior is uncertain;
+do not invent measured regressions or claim graph removes a sync without proof.
+
 ## Perf evidence expectations
 
 | Change type | Minimum evidence |

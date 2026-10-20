@@ -29,6 +29,12 @@ gh pr diff <N> --repo sgl-project/sgl-kernel-xpu
 - Prefetch / pipeline / fuse opportunities left on the table.
 - Softmax / rescale / epilogue: any extra device↔host or unnecessary
   materialization of S / P matrices.
+- **Always check CPU/device synchronization**, including Python wrappers and
+  SYCL queue/event waits, even for correctness-only PRs. Follow the shared
+  [synchronization checklist](performance-kernels.md#xpu-cpudevice-synchronization-required-for-every-xpu-pr):
+  device scalar extraction, dynamic boolean compaction, per-layer/per-step
+  frequency, and actual SYCL Graph capture/replay behavior. Graph use alone
+  does not prove that host waits or gather/scatter overhead disappear.
 
 ### 1b. Benchmark required for perf PRs (**BLOCK** if missing)
 If the PR is (or claims to be) a **performance optimization** — faster kernel,

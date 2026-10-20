@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including PR title validity, run-ci labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
+description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including PR title validity, run-ci labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For all XPU PRs: CPU/device synchronization, D2H copies, dynamic indexing and SYCL Graph capture/replay overhead. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
 ---
 
 # Intel XPU / CPU PR Review
@@ -270,6 +270,12 @@ Review asks:
   not silent `forward_native` / generic PyTorch / wrong attn backend.
 - No extra sync/copy/dtype tax on the Intel branch that CUDA does not pay; no
   global flag flips that hurt CUDA or Intel throughput “by accident”.
+- **Every XPU PR**, including correctness/enabling changes and sgl-kernel-xpu
+  wrappers, must check for added CPU/device synchronization. Trace device scalar
+  reads (`int(t)`, `.item()`, Python conditions), host copies, dynamic boolean
+  indexing, and explicit waits; distinguish setup from per-layer/per-step costs.
+  SYCL Graph is not proof that these costs disappear. Follow the
+  [synchronization checklist](references/performance-kernels.md#xpu-cpudevice-synchronization-required-for-every-xpu-pr).
 - **Tests must cover the diff**; if existing UTs cannot, the PR must update/add
   UTs (sglang: `register_*_ci` / unit tests; sgl-kernel-xpu: in-repo UT).
   “Tested locally, UT later” is not enough.
@@ -330,6 +336,10 @@ Hard rules:
   `XPUPiecewiseBackend` — changes to `cuda_graph_setup.py` / compilation backend
   selection must keep these mappings.
 - Spec utils disable `@torch.compile` on XPU — do not re-enable without hardware proof.
+- For changed XPU hot paths, verify capture **and replay**, including work outside
+  the captured region. Host scalar reads and data-dependent output shapes can
+  prevent capture or retain synchronization; graph replay does not remove
+  gather/scatter bandwidth. See the synchronization checklist in §1c.
 
 ### 7. Quantization / MoE
 - CPU AMX: W8A8, FP8, AWQ/GPTQ AMX schemes, MXFP4 registration when `is_cpu()`.
