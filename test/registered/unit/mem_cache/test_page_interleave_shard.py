@@ -108,8 +108,8 @@ from sglang.test.test_utils import (
     publish_build_topology,
 )
 
-register_cpu_ci(est_time=30, suite="base-a-test-cpu")
-register_cuda_ci(est_time=120, stage="base-c", runner_config="4-gpu-b200")
+register_cpu_ci(est_time=12, suite="base-a-test-cpu")
+register_cuda_ci(est_time=71, stage="base-c", runner_config="4-gpu-b200")
 
 N = 4  # shard size
 PS = 16  # physical page size
