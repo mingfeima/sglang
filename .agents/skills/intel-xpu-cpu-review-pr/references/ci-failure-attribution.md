@@ -22,6 +22,12 @@ test, and require a new eligible run on the latest PR head. Nightly-only tests
 that did not run on the PR head are **NIGHTLY NOT RUN**, not a merge blocker
 by themselves; do not claim they passed in CI.
 
+**Optional Extra exception:** if Extra / AMD Extra fails solely because
+`run-ci-extra` is missing, report the label-gate failure and unrun optional
+suites as informational only. Do not treat this alone as a CI regression,
+`NOT-VERIFIED-BLOCK`, or a reason to block merging. Missing `run-ci`, other
+required PR coverage, and actual test failures still follow the normal rules.
+
 ## Priority reminder
 
 **Breaking other platforms' CI (esp. CUDA) outranks Intel completeness.**

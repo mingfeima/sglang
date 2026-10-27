@@ -69,6 +69,12 @@ accuracy results do not prove those tests ran.
   missed suite/test, why it did not run, and link the gate/job evidence. Tell
   the reviewer explicitly **不能 merge** and set the overall verdict to
   **BLOCKED**, even when the failure is not PR-caused.
+- Exception: Extra / AMD Extra gate failures caused solely by a missing
+  `run-ci-extra` label are **informational only, not a merge blocker**.
+  Mention the missing label and that the optional suites did not run; do not
+  classify this alone as `PR-CAUSED`, `NOT-VERIFIED-BLOCK`, or set the overall
+  verdict to **BLOCKED**. This exception does not waive missing `run-ci`,
+  other required PR coverage, or actual test failures.
 - State the unblock action: add the required label and trigger a **new** run,
   rebase/fix the gate, fix the path filter or registration, or rerun after
   infrastructure recovery. Require the relevant tests to execute on the
