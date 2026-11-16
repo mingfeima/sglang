@@ -8,7 +8,7 @@ from sglang.srt.function_call.deepseekv4_detector import DeepSeekV4Detector
 from sglang.srt.function_call.utils import strip_structural_tag_excludes
 from sglang.test.ci.ci_register import register_cpu_ci
 
-register_cpu_ci(1.0, "base-a-test-cpu")
+register_cpu_ci(2, "base-a-test-cpu")
 
 THINK_TOKENS = ("<think>", "</think>")
 
