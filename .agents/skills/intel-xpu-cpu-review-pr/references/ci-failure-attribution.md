@@ -22,9 +22,12 @@ test, and require a new eligible run on the latest PR head. Nightly-only tests
 that did not run on the PR head are **NIGHTLY NOT RUN**, not a merge blocker
 by themselves; do not claim they passed in CI.
 
-**Optional Extra exception:** if Extra / AMD Extra fails solely because
-`run-ci-extra` is missing, report the label-gate failure and unrun optional
-suites as informational only. Do not treat this alone as a CI regression,
+**Optional Extra exception:** if Extra / AMD Extra is opted out solely because
+`run-ci-extra` is missing, or Xeon / XPU is opted out solely because
+`run-ci-xeon-extra` / `run-ci-xpu-extra` is missing, report the opt-out and unrun
+optional suites as informational only. For sglang PRs, automatically add the
+missing matching Intel labels as instructed in SKILL.md; verify a new eligible
+run rather than rerunning an old label-skipped event. Do not treat opt-out alone as a CI regression,
 `NOT-VERIFIED-BLOCK`, or a reason to block merging. Missing `run-ci`, other
 required PR coverage, and actual test failures still follow the normal rules.
 

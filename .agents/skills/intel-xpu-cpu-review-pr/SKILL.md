@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including PR title validity, run-ci labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For all XPU PRs: CPU/device synchronization, D2H copies, dynamic indexing and SYCL Graph capture/replay overhead. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
+description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including PR title validity, automatic Xeon/XPU extra CI labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For all XPU PRs: CPU/device synchronization, D2H copies, dynamic indexing and SYCL Graph capture/replay overhead. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
 ---
 
 # Intel XPU / CPU PR Review
@@ -53,6 +53,31 @@ Detect automatically from the PR URL / `--repo`. If unclear, ask once.
 When the user asks whether a red check is caused by the PR (sglang tree), run §14
 even if the code review is otherwise light.
 
+### Intel CI labels (sglang only; add automatically)
+
+Xeon and XPU PR CI are extra opt-in workflows; `run-ci` alone does not enable
+them. After classifying the affected platforms, inspect the current PR labels
+and **add any missing matching label without asking for confirmation**:
+
+| Affected platform | Label to add |
+|---|---|
+| CPU / Xeon | `run-ci-xeon-extra` |
+| XPU | `run-ci-xpu-extra` |
+| Both, including shared changes affecting both | Both labels above |
+
+Run only the command(s) for the affected platform(s), only when the label is missing:
+
+```bash
+gh pr edit <N> --repo sgl-project/sglang --add-label run-ci-xeon-extra
+gh pr edit <N> --repo sgl-project/sglang --add-label run-ci-xpu-extra
+```
+
+Keep existing labels. If permissions prevent adding a label, report the exact
+missing label and the failure; do not claim it was added. Do not apply these
+sglang-specific labels to `sgl-kernel-xpu` PRs. After adding a label, verify that
+a new eligible workflow run actually starts; adding a label does not prove tests
+ran, and rerunning an old label-skipped event retains its frozen event payload.
+
 ### Merge-readiness gate (both repos)
 
 Before any `APPROVE` or merge-ready verdict, check the latest PR head SHA, required
@@ -69,9 +94,11 @@ accuracy results do not prove those tests ran.
   missed suite/test, why it did not run, and link the gate/job evidence. Tell
   the reviewer explicitly **不能 merge** and set the overall verdict to
   **BLOCKED**, even when the failure is not PR-caused.
-- Exception: Extra / AMD Extra gate failures caused solely by a missing
-  `run-ci-extra` label are **informational only, not a merge blocker**.
-  Mention the missing label and that the optional suites did not run; do not
+- Exception: Extra / AMD Extra opt-out caused solely by missing `run-ci-extra`,
+  or Xeon / XPU opt-out caused solely by missing `run-ci-xeon-extra` /
+  `run-ci-xpu-extra`, is **informational only, not a merge blocker**. Add the
+  matching Intel labels as instructed above. Mention the missing label and
+  that the optional suites did not run; do not
   classify this alone as `PR-CAUSED`, `NOT-VERIFIED-BLOCK`, or set the overall
   verdict to **BLOCKED**. This exception does not waive missing `run-ci`,
   other required PR coverage, or actual test failures.
@@ -160,8 +187,9 @@ to hardware platforms). Still skim for top-level CUDA-only imports in shared mod
 2. `gh pr diff <N> --repo sgl-project/sglang`
 3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
    and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
-3a. Apply the merge-readiness gate above: verify required labels, gates and
-    required PR test-job execution on the latest head. Missing required PR
+3a. Add missing matching Xeon/XPU extra CI labels as instructed above, then
+  apply the merge-readiness gate: verify required labels, gates and
+  required PR test-job execution on the latest head. Missing required PR
     execution is **NOT VERIFIED — DO NOT MERGE**; absent nightly execution
     alone is **NIGHTLY NOT RUN** and non-blocking.
 4. **Other-CI gate (pillar 1):** list failed checks on CUDA / main `pr-test.yml`
