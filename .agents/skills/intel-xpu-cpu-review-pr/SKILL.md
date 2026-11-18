@@ -1,6 +1,6 @@
 ---
 name: intel-xpu-cpu-review-pr
-description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership, including PR title validity, automatic Xeon/XPU extra CI labels, skipped CI and merge readiness. For sglang: other CI, enabling parity, perf/kernels. For all XPU PRs: CPU/device synchronization, D2H copies, dynamic indexing and SYCL Graph capture/replay overhead. For sgl-kernel-xpu: benchmarks, simplicity, attention parity and UT coverage. Chinese analysis; English PR comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
+description: "Review SGLang or sgl-kernel-xpu PRs for Intel XPU/CPU ownership: CI and merge readiness, automatic Intel CI labels (sglang only), enabling parity, kernel performance and synchronization, reuse of existing utilities/helpers, benchmark and UT consistency. Chinese analysis; English comment drafts. Run with /intel-xpu-cpu-review-pr <PR number> [--repo sgl-kernel-xpu]."
 ---
 
 # Intel XPU / CPU PR Review
@@ -16,13 +16,6 @@ Review a PR from the perspective of the **Intel XPU** and **CPU (AMX Xeon)** pla
    - **XPU kernels**: out-of-tree [sgl-kernel-xpu](https://github.com/sgl-project/sgl-kernel-xpu) (pinned from `python/pyproject_xpu.toml`)
    - Python-only “enable” without the matching kernel (or with silent `forward_native`) is not a real perf win — call it out. See §1c.
    - Perf opt PRs need **benchmark numbers**; code changes need **UT coverage** (update tests if current ones miss the diff).
-
-### Pillar 1 detail — other CI
-
-Intel enabling / shared-SRT edits that make XPU/CPU better while turning CUDA red
-are an automatic **BLOCK**. Prefer device-guarded branches, lazy CUDA-only imports,
-and no accidental change to CUDA defaults. Intel CI is noisy (§14); **other-device
-CI that this PR newly fails is not negotiable noise**.
 
 Path map: [platform-map.md](references/platform-map.md).
 CI attribution: [ci-failure-attribution.md](references/ci-failure-attribution.md).
@@ -136,6 +129,34 @@ Rules:
 - `英文输出` / `English only` → whole review in English (still short + line refs).
 - `只分析不写 comment` → skip English paste blocks.
 
+## Existing implementation and convention check (both repos)
+
+Before suggesting a new abstraction or accepting new utils/helpers, check whether
+the behavior already exists in the **target repository at the PR head**, not only
+in the current workspace or in the changed files:
+
+- Search by behavior as well as symbol name. Start with the owning module,
+  nearby implementations and shared utilities; include test fixtures, quant/dequant,
+  device/stream/alignment helpers, benchmark harnesses and numerical assertions.
+- Read the existing implementation and a caller before recommending reuse. Compare
+  shapes, dtype/layout, device support, numerical semantics and hot-path costs.
+  Cite the existing helper's path and line; name any adaptation it needs. Similar
+  names or formulas alone do not prove interchangeability.
+- Prefer an existing suitable helper; otherwise consider sharing genuinely repeated
+  logic. Keep justified kernel specializations and small local helpers when extraction
+  adds more complexity than it removes. Style-only duplication is a non-blocking nit;
+  incorrect semantics, extra synchronization or missing coverage is a separate finding.
+- **Benchmarks:** compare the nearest existing bench's timing helper, warmup/repetitions,
+  synchronization, graph/eager mode, allocation/quantization inside the timed region,
+  statistics, units and output helpers. Explain meaningful differences; do not claim
+  timings are directly comparable or invalid merely because formatting differs.
+- **UTs:** compare the nearest test's golden reference, accumulation/reference dtype,
+  elementwise vs aggregate error checks, tolerances and fixtures. Reuse suitable
+  helpers, but do not blindly copy tolerances or replace a justified error metric.
+
+Report actionable reuse/convention findings with the new-code location and the
+existing implementation's location. Do not list every harmless repetition.
+
 ## When this review applies
 
 Run the full checklist when the PR touches any of:
@@ -150,7 +171,7 @@ Run the full checklist when the PR touches any of:
   `release-docker-xeon.yml`, `release-docker-intel-xpu-nightly.yml`
 - `test/registered/cpu/**`, `test/registered/xpu/**`, or new `register_cpu_ci` /
   `register_xpu_ci` markers
-- Docs under `docs_new/docs/hardware-platforms/{cpu_server,xpu}.mdx` or cookbook cells
+- Docs under `docs/docs/hardware-platforms/{cpu_server,xpu}.mdx` or cookbook cells
   claiming CPU/XPU support
 
 Also review **CUDA-centric "portable" refactors** that touch shared SRT code even if the
@@ -160,50 +181,21 @@ Skip a deep Intel review only when the diff is clearly isolated (e.g. pure CUDA 
 under `sgl-kernel/csrc/gpu/**` with no Python dispatch changes, or docs-only unrelated
 to hardware platforms). Still skim for top-level CUDA-only imports in shared modules.
 
-## Steps
+## Workflow
 
-### A. sgl-kernel-xpu repo (light)
-
-1. `gh pr view/diff <N> --repo sgl-project/sgl-kernel-xpu`; check its title
-   gate if any, without imposing sglang's title syntax.
-2. Follow **only** [sgl-kernel-xpu-review.md](references/sgl-kernel-xpu-review.md):
-   **性能（优化 PR 必须有 benchmark）→ 能否化简 →（attention）FA/FlashInfer
-   并行维·tile·数学等价 → UT 是否覆盖改动（不够就补）**
-3. 中文短报告 + 英文 comment 草稿。不要套用下面的 sglang 全量 checklist。
-
-### B. sglang repo (full)
-
-1. `gh pr view <N> --repo sgl-project/sglang --json title,body,files,author,baseRefName,headRefName,labels,commits,reviews,statusCheckRollup`
-1a. Check the **current title** and newest `PR Title / Check PR title` run;
-    `.github/workflows/pr-title.yml` on `main` is the source of truth.
-    Format: `[Type] scope: title` or `[Type] [Hardware] scope: title`; Type is
-    `Feat|Fix|Refactor|Perf|Doc|Test|CI|Chore`; scope/title required, exact
-    spaces, no outer whitespace. Hardware is uppercase except `Intel`, `Apple`,
-    `Huawei`, `Ascend`; `Revert "original title"` is valid. Invalid/current
-    failed check → **title: FAIL — BLOCKED** (link it, suggest a valid title).
-    Title edits leave the head SHA unchanged: ignore old failures after a new
-    pass; without a completed check for the edited title report
-    **title: NOT VERIFIED — DO NOT MERGE**.
-2. `gh pr diff <N> --repo sgl-project/sglang`
-3. Classify impact: **CPU-only / XPU-only / both / shared-SRT / deps-Docker-CI / docs**,
-   and whether it is a **model/op enabling** PR (→ §1b CUDA/HIP parity).
-3a. Add missing matching Xeon/XPU extra CI labels as instructed above, then
-  apply the merge-readiness gate: verify required labels, gates and
-  required PR test-job execution on the latest head. Missing required PR
-    execution is **NOT VERIFIED — DO NOT MERGE**; absent nightly execution
-    alone is **NIGHTLY NOT RUN** and non-blocking.
-4. **Other-CI gate (pillar 1):** list failed checks on CUDA / main `pr-test.yml`
-   (and AMD if present). Attribute each with §14. Any **PR-CAUSED** failure
-   outside Intel → **BLOCK** immediately.
-5. Grep the diff for checklist hot patterns. Enabling PRs → §1b parity with
-   CUDA/HIP ([enabling-parity.md](references/enabling-parity.md)).
-6. **Perf / kernels (pillar 3):** does the PR touch `sgl-kernel/csrc/cpu/`,
-   bump `pyproject_xpu.toml` / link sgl-kernel-xpu, or only Python?
-   See §1c / [performance-kernels.md](references/performance-kernels.md).
-7. List Intel CI outcomes; attribute reds with §14 (Intel flake ≠ auto-block).
-8. Cross-check claimed features vs [platform-map.md](references/platform-map.md)
-   and `cpu_server.mdx` / `xpu.mdx`.
-9. Output in pillar order: **其他 CI → 接入对齐 → 性能/kernel → Intel 细节**.
+1. Read PR metadata, diff, existing review comments and checks in the target repo.
+  Record the latest head and classify CPU / XPU / shared-SRT / deps-CI / docs impact.
+2. Check the current title against that repo's actual title gate. For sglang,
+  `.github/workflows/pr-title.yml` on main is authoritative; do not impose its
+  syntax on sgl-kernel-xpu. Apply automatic labels only to sglang.
+3. Perform the existing-implementation/convention check above. For sgl-kernel-xpu,
+  use its light reference instead of the sglang checklist below; the common
+  merge-readiness and output rules still apply.
+4. For sglang, review other-device CI first, then enabling parity, kernel performance
+  and Intel-specific contracts below. Load only relevant reference sections.
+5. Attribute failures (§14), verify actual required coverage using the common gate,
+  and recheck the head before the final verdict. Distinguish local/manual evidence
+  from latest-head CI; do not infer execution from registration or aggregate success.
 
 ## Checklist
 
@@ -222,97 +214,24 @@ Highest bar — ahead of Intel feature completeness.
   `PR-CAUSED-BLOCK` is a code regression; `NOT-VERIFIED-BLOCK` means required
   non-Intel tests never ran. Neither is merge-ready.
 
-How to check quickly:
-
-```bash
-gh pr checks <N> --repo sgl-project/sglang
-# Focus on pr-test.yml / CUDA jobs first; attribute with §14
-gh run list --repo sgl-project/sglang --workflow=pr-test.yml --branch <pr-head> --limit 5
-```
-
-### 1. Triage & scope
-- Does the PR title/body match the Intel surface area it actually touches?
-- Flag "NVIDIA-only" claims that still edit shared dispatch (`MultiPlatformOp`,
-  `server_args`, `common.py` device helpers, attention registry).
-- Note whether follow-up work is needed in **out-of-tree** `sgl-kernel-xpu`
-  (`https://github.com/sgl-project/sgl-kernel-xpu`) — XPU kernels are not in-tree.
-- **Enabling PR?** (new model / new op / new quant / new attn path / "support XPU|CPU")
-  → also run §1b. These PRs are common on Intel and often invent a one-off hook
-  that diverges from CUDA/HIP.
-
 ### 1b. Model / operator enabling — CUDA / HIP 接入一致性
-Intel enabling work must plug into the **same extension points** other devices use,
-not a parallel Intel-only side path — unless there is an explicit, documented reason
-(kernel out-of-tree, missing hardware feature, etc.).
-
-Full checklist:
-[references/enabling-parity.md](references/enabling-parity.md).
-
-When reviewing an enabling PR, open the CUDA (and HIP if present) reference
-implementation side-by-side and verify:
-
-1. **Hook point**: same registry / `MultiPlatformOp` / `ServerArgs` handler /
-   model override list that CUDA uses — not a new `if is_xpu():` island in a
-   random call site.
-2. **Dispatch shape**: `forward_cuda` / `forward_hip` / `forward_cpu` /
-   `forward_xpu` symmetry. HIP often aliases CUDA; **CPU/XPU must not blindly
-   alias** unless the kernel is truly shared. Default `forward_xpu`→native and
-   `forward_cpu`→native are footguns in enabling PRs — flag silent fallbacks.
-3. **Registration completeness**: attn backend name in `attention_registry`,
-   quant method in `QUANTIZATION_METHODS` (and CPU allowlist if needed), graph
-   runner map in `cuda_graph_setup`, model-arch accepted backends in
-   `server_args` / `arg_groups/overrides.py` (e.g. Gemma4 / Llama4 / GPT-OSS
-   lists include `intel_xpu` / `intel_amx` next to `triton` / `fa3` / `aiter`
-   **or** explicitly reject with a clear error).
-4. **Capability honesty**: if CUDA path enables graph / spec / FP8 / MLA prefill
-   and Intel cannot, the enabling PR must **gate or error**, not pretend parity.
-   Mirror how HIP/NPU leave unsupported branches — do not copy CUDA defaults
-   onto XPU.
-5. **API / flag surface**: same CLI flags and config keys as CUDA where behavior
-   exists; do not invent `--xpu-only-*` when an existing flag can grow a device
-   branch. Device affinity env stays platform-native (`ZE_AFFINITY_MASK` vs
-   `CUDA_VISIBLE_DEVICES`).
-6. **Tests**: CUDA enabling PRs usually add `register_cuda_ci`; Intel enabling
-   should add `register_xpu_ci` / `register_cpu_ci` at the analogous suite, or
-   state "CUDA-only" in the PR. Compare test structure (server args, model id,
-   assertions) to the CUDA twin — not a bare import smoke if CUDA has e2e.
-7. **Docs / cookbook**: same command shape as CUDA docs, with Intel device /
-   attn backend / known limitations swapped in — not a divergent launch story.
-
-**Anti-patterns to BLOCK or call out:**
-- Copy-paste of CUDA kernel launch wrappers with `torch.cuda` left inside
-- New Intel-only helper that duplicates an existing `MultiPlatformOp`
-- Model override allowlist updated for `triton`/`fa3` but forgetting `intel_xpu`
-  / `intel_amx` when the PR claims Intel support
-- "Works on XPU" via unintended `forward_native` with no kernel + no test
-- HIP followed CUDA by alias; Intel aliases CUDA too even though kernels differ
+For new model/op/quant/attention support, read
+[enabling-parity.md](references/enabling-parity.md). Compare the CUDA/HIP owner,
+registry, dispatch, capability gates, API, tests and docs side by side. Reuse the
+same extension points; require a concrete reason for a device-specific path.
 
 ### 1c. Performance & kernel placement (pillar 3)
-Full detail: [references/performance-kernels.md](references/performance-kernels.md).
+Read [performance-kernels.md](references/performance-kernels.md) for kernel
+placement and evidence requirements. Perf claims require before/after numbers
+(hardware, dtype, shapes, baseline and method); missing evidence blocks approval.
+No-perf-claim correctness/refactor changes are exempt from benchmarks, not UTs.
+Existing tests may suffice if they exercise the diff; otherwise require tests in
+the same PR. Trace the real hot path, fallback, layout conversions and pin/build
+dependencies, not just the Python API.
 
-| | CPU | XPU |
-|---|---|---|
-| Kernel location | **In-tree** `sgl-kernel/csrc/cpu/` | **Other repo** [sgl-kernel-xpu](https://github.com/sgl-project/sgl-kernel-xpu) |
-| Pin / build | `sgl-kernel/pyproject_cpu.toml`, Xeon Docker | `python/pyproject_xpu.toml` git pin |
-
-Review asks:
-- Perf / “fused” / “AMX” / “XPU kernel” claims → corresponding kernel diff **or**
-  linked sgl-kernel-xpu PR + pin bump. Python-only = correctness at best.
-- **Perf optimization PRs must include benchmark results** (hw, shapes, before/after).
-  No numbers → REQUEST CHANGES / BLOCK. “No perf claim” refractors are exempt.
-- Hot path actually hits the kernel (`torch.ops.sgl_kernel` / sgl-kernel-xpu ops),
-  not silent `forward_native` / generic PyTorch / wrong attn backend.
-- No extra sync/copy/dtype tax on the Intel branch that CUDA does not pay; no
-  global flag flips that hurt CUDA or Intel throughput “by accident”.
-- **Every XPU PR**, including correctness/enabling changes and sgl-kernel-xpu
-  wrappers, must check for added CPU/device synchronization. Trace device scalar
-  reads (`int(t)`, `.item()`, Python conditions), host copies, dynamic boolean
-  indexing, and explicit waits; distinguish setup from per-layer/per-step costs.
-  SYCL Graph is not proof that these costs disappear. Follow the
-  [synchronization checklist](references/performance-kernels.md#xpu-cpudevice-synchronization-required-for-every-xpu-pr).
-- **Tests must cover the diff**; if existing UTs cannot, the PR must update/add
-  UTs (sglang: `register_*_ci` / unit tests; sgl-kernel-xpu: in-repo UT).
-  “Tested locally, UT later” is not enough.
+For **every XPU PR**, including kernel-xpu, use the reference's synchronization
+checklist: scalar reads, D2H, dynamic indexing, queue/event waits, setup vs per-step
+costs, and graph capture/replay. Graph use does not prove host waits disappear.
 
 ### 2. Device / platform contracts (BLOCK if broken)
 - **`is_cpu()` ≠ `--device cpu`**. Real CPU engine requires `SGLANG_USE_CPU_ENGINE=1`.
@@ -412,36 +331,16 @@ live constraints until explicitly closed in code **and** docs.
 - Version pins in `pyproject_{cpu,xpu}.toml` and Dockerfiles need coordinated bumps.
 
 ### 11. Tests & CI registration
-Registration (see [write-sglang-test](../write-sglang-test/SKILL.md)):
-- CPU unit / import-safe: `register_cpu_ci(..., suite="base-a-test-cpu")` (main `pr-test.yml`)
-- CPU AMX e2e/kernels: `register_cpu_ci(..., suite="base-b-test-cpu")` → `pr-test-xeon.yml`
-- XPU PR: `register_xpu_ci` → `stage-a-test-1-gpu-xpu` / `stage-b-test-1-gpu-xpu`
-- XPU nightly models: `nightly-xpu-2-gpu` / `nightly-xpu-4-gpu`
-
-Review asks:
-- New Intel feature → matching `register_*_ci` (or explicit "CUDA-only" disable reason)
-- Changed Intel path → existing Xeon/XPU jobs still cover it; add a focused test if not
-- **If existing tests cannot cover the change → update/add UT in the same PR**
-  (kernel math, new op, new backend path). Do not merge on “manual smoke only”.
-- For each new or changed `register_xpu_ci` / `register_cpu_ci`, verify the file
-  matches the workflow path filter, the registration selects a job's actual
-  suite, and its top-level import chain is available in that platform's CI
-  image (check platform dependencies). A registration alone is not execution.
-- Check required PR CI target jobs and test-file results on the PR head, not
-  just the workflow conclusion. If a gate, path filter, or skipped job
-  prevents a required PR test from running, mark it **NOT VERIFIED — DO NOT
-  MERGE**; require a new eligible run before treating the registration as
-  validated. For nightly-only registrations, report **NIGHTLY NOT RUN**
-  without blocking solely on absent nightly execution. Local smoke results
-  do not prove nightly CI passed or replace skipped required PR CI.
-- Do not put `register_*_ci` under `python/sglang/` (pre-commit rejects it)
-- Prefer small models already used on Intel CI (see `test/registered/{cpu,xpu}/`)
-- Path filters on `pr-test-xeon.yml` / `pr-test-xpu.yml` fire on almost all
-  SRT/test/kernel changes — Intel jobs often run even for "CUDA" PRs; that does
-  **not** mean every red is the PR's fault (see §14).
+Use [write-sglang-test](../write-sglang-test/SKILL.md) when needed. For each new
+or changed registration, derive valid suite names from `test/run_suite.py` and
+the workflows **at the PR head**, not examples in this skill. Verify path filters,
+suite dispatch and top-level imports in the target CI image. Prefer nearby
+registered fixtures/models; do not register CI tests under `python/sglang/`.
+Apply the common coverage gate above; a registered but undispatched test is not
+coverage, and a single invalid registration can break other backends' discovery.
 
 ### 12. Docs & cookbook parity
-- Operator truth: `docs_new/docs/hardware-platforms/cpu_server.mdx` and `xpu.mdx`.
+- Operator truth: `docs/docs/hardware-platforms/cpu_server.mdx` and `xpu.mdx`.
 - Launch examples: `--device cpu|xpu`, correct attn backend, `--disable-overlap-schedule`
   where required, page-size notes for `intel_xpu`.
 - Prefer `sglang serve` in new docs; flag regressions to deprecated launchers in
@@ -453,98 +352,26 @@ Review asks:
   requests still open?
 
 ### 14. CI failure attribution (red check ≠ PR bug)
-SGLang CI is unstable; **non-CUDA devices are worse**. A red `pr-test-xpu` /
-`pr-test-xeon` job is a hypothesis, not a verdict. Full procedure:
-[references/ci-failure-attribution.md](references/ci-failure-attribution.md).
-
-**Priority order when many jobs are red:**
-
-1. **Non-Intel / CUDA jobs with PR-CAUSED signature** → hard **BLOCK** (§0)
-2. Intel jobs with PR-CAUSED signature → block or request changes
-3. PRE-EXISTING / FLAKE on Intel → comment only, do not block
-4. PRE-EXISTING red on CUDA → note it; still not introduced by this PR
-
-For each failed job, assign exactly one label:
-
-| Label | When | Block merge? |
-|---|---|---|
-| **PR-CAUSED** | New signature + clear overlap with diff (or new test the PR added) | **Yes** — always for CUDA/other-device; yes for Intel |
-| **PRE-EXISTING** | Same signature on recent `main` push or many unrelated PRs | No — link evidence |
-| **FLAKE / INFRA** | Timeout, runner, Docker, device init, cancelled job; or pass on rerun same SHA | No — suggest rerun |
-| **UNKNOWN** | Cannot decide | Soft hold on CUDA/other; on Intel, one rerun + residual risk note |
-
-**NOT VERIFIED** is a separate coverage status, not a failure-attribution
-label. When a required PR test did not run, state which test/suite was missed,
-the concrete reason (gate, filter, cancellation, or skipped job), link the
-job/filter evidence, and say what new run on the latest head would resolve it.
-Report **NOT VERIFIED — DO NOT MERGE** explicitly. For nightly-only tests not
-run on the PR head, report **NIGHTLY NOT RUN** and do not block on that alone;
-do not infer a nightly pass from PR CI or local runs. An INFRA gate can be
-non-PR-caused while required PR coverage still blocks merging.
-
-Fast path:
-1. Extract **signature**: job name + test id + error class + one message line.
-2. Compare to recent `main` / unrelated PR runs of the **same workflow**.
-3. Check **code overlap**: do PR files sit under what the failing test exercises?
-4. If infra-looking or no overlap → rerun once before blaming the author.
-5. **Never** dismiss a CUDA **PR-CAUSED** fail as "Intel CI is flaky".
-
-Bias: on **Intel**, assume PRE-EXISTING/FLAKE until overlap is clear; if the PR
-**added** the failing test or claims XPU/CPU support, assume PR-CAUSED.
-On **CUDA / other devices**, bias toward PR-CAUSED when the diff touches shared
-SRT and the signature is new vs base/`main`.
-
-Do **not** require green Intel CI as a blanket gate when tests actually ran
-and endemic failures are documented — but **do** require relevant CI tests to
-run and not newly break other CI.
+Read [ci-failure-attribution.md](references/ci-failure-attribution.md) for the
+signature -> baseline -> code-overlap -> rerun procedure. Assign each failure
+exactly one label: `PR-CAUSED`, `PRE-EXISTING`, `FLAKE / INFRA`, or `UNKNOWN`.
+Prioritize non-Intel regressions; never dismiss a PR-caused failure as Intel noise.
+Link evidence before claiming a pre-existing failure. Failure attribution and
+coverage are separate: an infra failure can still leave required coverage missing.
+Do not demand blanket-green Intel CI when tests ran and baseline failures are proven.
 
 ## Output
 
-Default: **短中文 + 短英文草稿**（见 §Language）。默认偏短，不写长 checklist 复述。
+Follow the Language rules above. Lead with concrete findings in severity order,
+then a short verdict (`APPROVE | COMMENT | REQUEST CHANGES | BLOCKED`) and evidence.
+Each code finding needs a file/line link, impact and action; pure CI attribution
+may use a job link. Give 2-4 sentence English drafts with locations for actionable
+findings; label style/reuse suggestions as non-blocking nits.
 
-### A. 中文报告（主输出，尽量短 + 行号）
-
-结构固定、能省则省：
-
-```text
-## 摘要
-<1–3 句：PR 做什么 + 总评 APPROVE|COMMENT|REQUEST CHANGES|BLOCKED；
-如必需 PR CI 没跑，明确写 NOT VERIFIED — DO NOT MERGE / 不能 merge；
-仅 nightly 没跑则标 NIGHTLY NOT RUN，不因此 BLOCKED>
-
-## 支柱/焦点
-- 标题: PASS | FAIL | NOT VERIFIED  # 以当前标题及最新 title check 为准
-- 其他 CI: …         # 未运行的必需测试标 NOT-VERIFIED-BLOCK
-- Intel CI: …        # 必需 PR 测试未运行标 NOT VERIFIED — DO NOT MERGE；
-                     # 仅 nightly 未运行标 NIGHTLY NOT RUN，不单独阻断
-- 对齐: …          # enabling 才写
-- 性能/kernel: …   # 落点 + bench有无 + UT有无
-- （kernel-xpu）化简 / FA对照: …
-
-## 问题
-- 🔴/⚠️ `path:Lstart-Lend` — 一句话原因 + 一句话建议
-```
-
-要求：
-- **每条问题必须有行号**（`file:12-34` 或 code citation）。纯流程/CI 归因可无行号。
-- 不写大段「PR 动机散文」；不把整个 skill checklist 贴进报告。
-- sgl-kernel-xpu：同样短结构，只保留 perf / 化简 / FA / bench / UT。
-
-### B. 英文 comment 草稿（尽量短）
-
-每条 2–4 句，**文件+行号**打头，按严重度：
-
-```markdown
-### Ready-to-paste (English)
-
-**[blocking]** `file.hpp:120-145`: <one-line issue>. <one-line ask>.
-
-**[missing UT]** No test covers <path/symbol>. Please add UT in this PR.
-
-**[nit]** `file.hpp:80`: <optional simplify>.
-```
-
-不要套 `<details>` 长模板，除非用户要展开。不要自动 `gh pr comment`。
+For sglang, briefly cover title, `other-CI`, Intel coverage, enabling parity when
+relevant, and perf/bench/UT evidence. For kernel-xpu, keep only its focused checks
+and actual CI status. Mention reuse/convention findings when meaningful; omit
+irrelevant checklist items and long templates. Never publish without user approval.
 
 ## Related skills
 

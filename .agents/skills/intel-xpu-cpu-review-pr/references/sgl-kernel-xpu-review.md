@@ -5,19 +5,9 @@ Use when the PR is in **https://github.com/sgl-project/sgl-kernel-xpu**
 skip CUDA/HIP enabling parity, ServerArgs, cookbook, Intel CI flake theater
 unless the PR clearly changes a public op signature that sglang calls.
 
-## Usage
-
-```
-/intel-xpu-cpu-review-pr <N> --repo sgl-kernel-xpu
-# or paste a PR URL under sgl-project/sgl-kernel-xpu
-```
-
-Fetch:
-
-```bash
-gh pr view <N> --repo sgl-project/sgl-kernel-xpu --json title,body,files,author,baseRefName,commits,reviews
-gh pr diff <N> --repo sgl-project/sgl-kernel-xpu
-```
+Use the common workflow, existing-implementation/convention check, merge-readiness
+gate and output rules in [SKILL.md](../SKILL.md). Check this repo's title gate if
+present; do not impose sglang's title syntax or Intel CI labels.
 
 ## Focus areas
 
@@ -49,12 +39,20 @@ Pure correctness / refactor / API-wire PRs with an explicit “no perf claim” 
 exempt; if the title/body implies speedup, they are **not** exempt.
 
 ### 2. Can the logic be simplified?
+- Check the target repo's existing utils/helpers before accepting new ones. Compare
+  neighboring kernel wrappers, quant/dequant helpers, fixtures, bench harnesses and
+  assertions; cite the existing implementation and verify its contract before
+  recommending reuse. Do not import from the separate sglang tree by accident.
 - Dead branches, duplicated epilogues, copy-paste for prefill vs decode that
   could share a template.
 - Over-parameterized helpers; magic constants that should be named once.
 - Control flow that exists only for a debug path left enabled.
 - Prefer readable structure **when it does not hurt the inner loop**; do not
   ask to “simplify” away a perf-critical specialization without a reason.
+- Compare benchmark timing/statistics and output with the nearest existing bench;
+  reuse suitable shared helpers (for example `_bench` emitters when present).
+  Distinguish eager vs graph timing and allocation/quantization included in the
+  timed region. Formatting or harmless duplication alone is a non-blocking nit.
 
 ### 3. Overlap with FlashAttention / FlashInfer — algorithm parity
 When the kernel implements attention (or a close cousin: varlen, paged KV,
@@ -78,9 +76,13 @@ compare to the CUDA sibling kernel in sgl-kernel / sgl-kernel-xpu history.
   causal/page modes, edge cases the diff touches).
 - If current tests **cannot** cover the change (new op, new tile path, new
   numeric mode) → author must **add/update unit tests** in the same PR.
-- “Tested locally” / “will add later” without UT diff → **REQUEST CHANGES**.
+- Existing UTs suffice if they exercise the diff; manual testing alone does not
+  replace missing coverage.
 - Prefer golden vs FA/FlashInfer or vs previous kernel within tolerance for
   attention math changes.
+- Compare reference precision, tolerances and elementwise vs aggregate error
+  metrics with the nearest UT. Reuse equivalent helpers; explain justified
+  differences rather than forcing every kernel to use `assert_close`.
 
 ## Light extra checks (one-liners)
 
@@ -89,22 +91,5 @@ compare to the CUDA sibling kernel in sgl-kernel / sgl-kernel-xpu history.
 - Obvious correctness bugs (OOB, wrong stride, missing fence) still **BLOCK**.
 - Do not demand sglang-tree CI green from this repo alone.
 
-## Output (中文 + 英文草稿)
-
-**尽量短。** 中文问题条目必须带 `file:Lstart-Lend`。
-
-```text
-## 摘要
-<1–2 句 + 总评>
-
-## 焦点
-- 性能: …（优化则写有无 bench）
-- 化简: …
-- FA/FlashInfer: …（无关则跳过）
-- UT: 有覆盖 / 缺 → 🔴
-
-## 问题
-- ⚠️ `xe_fmha_fwd_mainloop.hpp:520-545` — …
-```
-
-英文每条 2–4 句，同样带行号。
+Keep the report focused on performance, reuse/simplicity, attention parity when
+applicable, UT coverage and actual CI evidence. Use the common output rules.
