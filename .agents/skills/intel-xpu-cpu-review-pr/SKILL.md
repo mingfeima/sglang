@@ -95,11 +95,9 @@ accuracy results do not prove those tests ran.
   classify this alone as `PR-CAUSED`, `NOT-VERIFIED-BLOCK`, or set the overall
   verdict to **BLOCKED**. This exception does not waive missing `run-ci`,
   other required PR coverage, or actual test failures.
-- State the unblock action: add the required label and trigger a **new** run,
-  rebase/fix the gate, fix the path filter or registration, or rerun after
-  infrastructure recovery. Require the relevant tests to execute on the
-  latest head before changing this verdict; a rerun of a label-skipped event
-  cannot make its frozen event payload eligible.
+- State the unblock action using the decision table below for sglang, or the
+  target repo's own process otherwise. Require the relevant tests to execute
+  on the latest head before changing this verdict.
 - Apply this gate to **required PR CI coverage of the changed paths**, not
   optional nightly suites or intentionally skipped tests. If a changed test
   runs only in nightly, report **NIGHTLY NOT RUN** with its suite and any local
@@ -108,6 +106,32 @@ accuracy results do not prove those tests ran.
   and fails due to the PR is still `PR-CAUSED` under §14. `PRE-EXISTING`
   failures in tests that *did run* are attributed under §14, not treated as
   missing CI coverage.
+
+### CI blocker and next action (sglang)
+
+In every review, report **CI blocker / next action**: the current head, the
+first failing gate or real test (link its job and quote the decisive log line),
+which required coverage is missing, and who should act next. A green gate job
+can still output "tests skipped"; inspect its logs and the downstream jobs.
+Use the latest attempt on the current head, not an older failure or the aggregate
+finish job. If nothing blocks CI, say so.
+
+| Evidence | What to recommend |
+|---|---|
+| `Rebase Required` / head does not contain `MIN_BASE_SHA`, or GitHub reports a merge conflict with `main` | Ask the author to rebase onto current `main`, resolve conflicts if any, and push. Verify CI on the new SHA and check whether it needs fresh commit approval. Being behind `main` alone is not evidence of a rebase gate. |
+| Gate says `run-ci` is missing | Ask an authorized maintainer to comment `/tag-and-rerun-ci` to add the label, approve the current head, and trigger CI. For a draft, mark it ready first. |
+| `run-ci` is present, but the gate says the current SHA lacks commit approval | Ask an authorized maintainer to comment `/approve-ci`. It approves the current head and retries approval-gated runs that skipped tests; it does not add labels or broadly retry unrelated failures. Approval of an older SHA does not count. For a draft, mark it ready first. |
+| Current SHA is approved, required jobs failed or were cancelled by a transient runner, network, or API rate-limit issue, and no retry is active | Recommend `/rerun-failed-ci` after recovery. If the same infrastructure failure persists, send the failing job link and error to CI maintainers instead of repeatedly commenting. |
+| Maintenance pause, persistent setup/credential error, or runner/security policy blocks the job | Wait for maintenance to lift or ask CI maintainers to resolve the blocker; do not suggest bypassing protections. Then recheck the gate and rerun the affected coverage. |
+| PR-caused test failure, invalid suite, or missing test due to a path filter | Fix the code, registration, or workflow first; a retry alone does not provide coverage. |
+| Relevant jobs already queued or running | Point to the active run and wait for the target tests; do not recommend a duplicate command. |
+
+After a slash command, check its handler log for approval or rejection and
+verify the resulting attempt and target jobs. A rerun can keep the same run ID
+and increment `run_attempt`; no new run ID does not imply the command failed.
+If eligibility depends on a frozen event label or draft state, require a fresh
+eligible event instead of assuming a retry will update that payload. Recommend
+actions only: do not rebase, push, or post CI commands without user authorization.
 
 ## Language (required)
 
